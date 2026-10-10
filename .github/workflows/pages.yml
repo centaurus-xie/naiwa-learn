@@ -1,0 +1,66 @@
+name: Update cards and deploy Pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '17 0 * * *' # Hong Kong 08:17 (UTC+8)
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify learning and feed logic
+        run: |
+          npm test
+          python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Restore last successful feed
+        uses: actions/cache/restore@v4
+        with:
+          path: data/cards.json
+          key: cards-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: cards-
+      - name: Update news (retain previous cards on failure)
+        id: refresh
+        continue-on-error: true
+        run: python3 scripts/update_cards.py
+      - name: Report stale feed
+        if: steps.refresh.outcome == 'failure'
+        run: echo '::warning::News update failed. Deploying previously available cards; check the displayed update date.'
+      - name: Cache current feed
+        if: steps.refresh.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: data/cards.json
+          key: cards-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Prepare public files
+        run: |
+          mkdir -p _site
+          cp index.html styles.css app.js learning.js _site/
+          cp -R assets data _site/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

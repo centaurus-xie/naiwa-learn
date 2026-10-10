@@ -1,0 +1,55 @@
+{
+  "fetchedAt": "2026-10-10T16:11:00.040457+00:00",
+  "cards": [
+    {
+      "id": "e05551817b225bef",
+      "category": "模型運作",
+      "question": "模型「訓練」和「推論」，差別在哪？",
+      "answer": "訓練是用資料調整模型的參數；推論是使用訓練好的模型處理新輸入。你輸入一句問題、等待回答，通常就是在使用推論，而不是重新訓練模型。",
+      "sourceName": "allenai · Hugging Face",
+      "sourceUrl": "https://huggingface.co/blog/allenai/impactful-scheduling",
+      "newsTitle": "Impactful scheduling for GPU clusters",
+      "publishedAt": "2026-10-09T15:20:29+00:00"
+    },
+    {
+      "id": "88e871d5a8d26738",
+      "category": "多模態",
+      "question": "模型能看圖片，就叫「多模態」嗎？",
+      "answer": "多模態指模型能處理或連結多種資料形式，例如文字、圖片、聲音。能根據圖片回答文字問題，就是一個例子；但不代表它能處理所有形式。",
+      "sourceName": "LiquidAI · Hugging Face",
+      "sourceUrl": "https://huggingface.co/blog/LiquidAI/open-d1",
+      "newsTitle": "Multimodal open d1 decision models for the edge",
+      "publishedAt": "2026-10-07T16:54:33+00:00"
+    },
+    {
+      "id": "16b7810afb00bdc0",
+      "category": "語音 AI",
+      "question": "語音辨識和語音合成，是同一件事嗎？",
+      "answer": "方向相反。語音辨識（ASR）把聲音轉成文字；語音合成（TTS）把文字轉成聲音。語音助手可能把這兩個能力串起來，但它們是不同任務。",
+      "sourceName": "tiiuae · Hugging Face",
+      "sourceUrl": "https://huggingface.co/blog/tiiuae/falcon-asr",
+      "newsTitle": "Introducing Falcon ASR",
+      "publishedAt": "2026-10-07T13:21:03+00:00"
+    },
+    {
+      "id": "67f5f61696a2949d",
+      "category": "模型訓練",
+      "question": "「微調」需要把模型從頭訓練一次嗎？",
+      "answer": "不用。微調是在已訓練好的模型上，使用特定任務或領域的資料繼續訓練，讓它更適合某種工作。資料品質與測試方式，往往比單純增加資料量更重要。",
+      "sourceName": "nvidia · Hugging Face",
+      "sourceUrl": "https://huggingface.co/blog/nvidia/nemotron-ioi-and-imo-2026",
+      "newsTitle": "One Model Family, Two Gold-Level Results: Fine-Tuning Nemotron for IOI and IMO",
+      "publishedAt": "2026-10-07T12:45:31+00:00"
+    },
+    {
+      "id": "bd1136d0fcfd6f13",
+      "category": "AI Agent",
+      "question": "AI Agent，和一般聊天機器人有什麼不同？",
+      "answer": "一般聊天機器人主要回覆問題；Agent 還會圍繞目標規劃步驟、使用工具，並依結果調整下一步。它仍可能犯錯，重要操作需要人來確認。",
+      "sourceName": "microsoft · Hugging Face",
+      "sourceUrl": "https://huggingface.co/blog/microsoft/thinkingbox",
+      "newsTitle": "The Agent Said It Was Done. The Database Disagreed.",
+      "publishedAt": "2026-10-03T22:56:48+00:00"
+    }
+  ]
+}
