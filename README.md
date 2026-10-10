@@ -1,6 +1,6 @@
-# 小黃陪你學 · AI Daily
+# 奶蛙小課堂 · AI Daily
 
-每天五張 AI 小卡。點開答案，選「再看看」或「記住了」，完成後明天再見。
+每天五張 AI 小卡，和學習夥伴奶蛙一起學習。點開答案，選「再看看」或「記住了」，完成後明天再見。
 
 純 HTML / CSS / JavaScript，無建置步驟、無第三方 JavaScript 套件、無 API 金鑰。Python 只用於 GitHub Actions 每日更新資料；網站本身完全靜態。
 
