@@ -10,7 +10,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from zoneinfo import ZoneInfo
 import xml.etree.ElementTree as ET
 
@@ -182,6 +182,57 @@ def write_payload(target, payload):
     temporary.replace(target)
 
 
+def failure_reason(error):
+    """Only expose known diagnostics, never raw response bodies or secrets."""
+    if isinstance(error, json.JSONDecodeError):
+        return '模型或 API 回傳的 JSON 不完整或無法解析。'
+    if isinstance(error, TimeoutError):
+        return '文章抓取或 DeepSeek 請求逾時。'
+    if isinstance(error, URLError):
+        return '無法連線至文章來源或 DeepSeek API。'
+    message = str(error)
+    http = re.fullmatch(r'DeepSeek returned HTTP ([0-9]{3})', message)
+    if http:
+        code = http.group(1)
+        advice = {'400': '請求參數或模型名稱不被接受', '401': 'API 金鑰驗證失敗',
+                  '402': 'API 帳戶餘額不足', '429': 'API 請求受到限流',
+                  '500': 'DeepSeek 服務端錯誤', '503': 'DeepSeek 服務暫時不可用'}
+        return 'DeepSeek HTTP ' + code + '：' + advice.get(code, 'API 拒絕請求') + '。'
+    reasons = {
+        'Missing LLM_API_KEY': '未設定 LLM_API_KEY，請新增同名的倉庫 Actions Secret。',
+        'Expected exactly five cards': '模型未輸出恰好五張卡片，或判斷無法產出五張有證據的卡片。',
+        'Invalid card': '模型輸出的卡片結構不正確。',
+        'Invalid or repeated source': '模型輸出的來源索引無效或重複，五張卡須各用一篇文章。',
+        'Incomplete model output': '模型未正常完成輸出，可能達到輸出長度上限。',
+        'Card must be in Chinese': '模型輸出的標題、導讀或分類缺少中文。',
+        'Expected a declarative discovery headline': '模型仍輸出了帶問號的標題，未符合新知導讀格式。',
+        'Duplicate question': '模型輸出重複標題，與本批或歷史卡片相同。',
+        'Evidence not found in source': '模型提供的證據片段無法在對應文章正文中逐字找到。',
+        'No recent publisher articles available': 'RSS 中沒有符合來源與日期條件的文章。',
+        'Not enough readable articles for a new edition': '可讀文章不足五篇，或未成功讀取任何尚未使用的文章。',
+        'Unexpected publisher redirect': '文章來源發生非預期轉址。',
+        'Publisher response too large': '文章來源回應超過大小上限。',
+        'Article body unavailable': '無法擷取足夠的文章正文。',
+        'Invalid card field: category': '卡片分類格式不正確：必須是 2–12 字的文字。',
+        'Invalid card field: question': '卡片標題格式不正確：必須是 12–80 字的文字。',
+        'Invalid card field: answer': '卡片導讀格式不正確：必須是 80–320 字的文字。',
+        'Invalid card field: evidence': '卡片證據格式不正確：必須是 10–180 字元的原文片段。',
+    }
+    return reasons.get(message, '更新時發生未分類錯誤；未輸出原始回應，以避免洩露敏感資料。')
+
+
+def report_failure(reason):
+    print('Card generation failed: ' + reason, file=sys.stderr)
+    output = os.environ.get('GITHUB_OUTPUT')
+    if output:
+        with open(output, 'a', encoding='utf-8') as stream:
+            stream.write('failure_reason=' + reason + '\n')
+    summary = os.environ.get('GITHUB_STEP_SUMMARY')
+    if summary:
+        with open(summary, 'a', encoding='utf-8') as stream:
+            stream.write('### 卡片生成失敗\n\n' + reason + '\n\n上一批卡片已保留。\n')
+
+
 def refresh(previous, now, api_key):
     if not api_key:
         raise ValueError('Missing LLM_API_KEY')
@@ -224,11 +275,7 @@ def main():
     try:
         payload, generated = refresh(previous, now, os.environ.get('LLM_API_KEY', '').strip())
     except Exception as error:
-        print('Card update failed (' + type(error).__name__ + '); previous edition retained.', file=sys.stderr)
-        if not os.environ.get('LLM_API_KEY', '').strip():
-            print('Set LLM_API_KEY in repository Settings > Secrets and variables > Actions.', file=sys.stderr)
-        elif isinstance(error, RuntimeError) and str(error).startswith('DeepSeek returned HTTP '):
-            print(str(error), file=sys.stderr)
+        report_failure(failure_reason(error))
         write_payload(target, {**previous, 'checkedAt': now.isoformat(), 'status': 'update-failed'})
         return 1
     write_payload(target, payload)

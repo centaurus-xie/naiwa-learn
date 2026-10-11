@@ -12,6 +12,22 @@ updater = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(updater)
 
 class FeedTests(unittest.TestCase):
+    def test_diagnostics_identify_validation_without_echoing_untrusted_errors(self):
+        self.assertIn('80–320',updater.failure_reason(ValueError('Invalid card field: answer')))
+        self.assertIn('逐字',updater.failure_reason(ValueError('Evidence not found in source')))
+        self.assertIn('餘額不足',updater.failure_reason(RuntimeError('DeepSeek returned HTTP 402')))
+        self.assertNotIn('secret-123',updater.failure_reason(ValueError('secret-123\n::error::injected')))
+
+    def test_failure_reason_reaches_final_step_and_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output=Path(directory)/'output'
+            summary=Path(directory)/'summary'
+            with patch.dict('os.environ',{'GITHUB_OUTPUT':str(output),'GITHUB_STEP_SUMMARY':str(summary)}):
+                updater.report_failure(updater.failure_reason(ValueError('Evidence not found in source')))
+            self.assertTrue(output.read_text().startswith('failure_reason='))
+            self.assertIn('逐字',output.read_text())
+            self.assertIn('上一批卡片已保留',summary.read_text())
+
     def test_untrusted_future_and_duplicate_items(self):
         def item(url, date='Sat, 10 Oct 2026 00:00:00 GMT'):
             return f'<item><title>Agent update</title><link>{url}</link><pubDate>{date}</pubDate></item>'

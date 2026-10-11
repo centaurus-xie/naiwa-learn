@@ -72,6 +72,8 @@ jobs:
           artifact_name: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Mark failed generation after publishing fallback
         if: steps.refresh.outcome == 'failure'
+        env:
+          FAILURE_REASON: ${{ steps.refresh.outputs.failure_reason || '生成步驟未回傳詳細原因，請查看 Generate DeepSeek cards 日誌。' }}
         run: |
-          echo '::error::Card generation failed. Previous cards remain online. Check LLM_API_KEY, DeepSeek balance and refresh logs.'
+          echo "::error::Card generation failed: $FAILURE_REASON Previous cards remain online."
           exit 1
