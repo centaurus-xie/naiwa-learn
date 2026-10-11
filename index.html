@@ -31,17 +31,23 @@
         <div class="progress" id="progress" aria-label="學習進度"></div>
         <article class="card" id="card" aria-live="polite">
           <div class="card-meta"><span class="pill" id="category">AI 基礎</span><span class="card-spark" aria-hidden="true">✳</span></div>
-          <div class="card-content"><span class="card-kicker" id="kicker">值得關注的新進展</span><h2 id="question">正在準備今天的小發現…</h2><div id="answer" hidden><p id="answer-text"></p><div class="news-context" id="news-context" hidden><span>延伸閱讀 · 原文</span><p id="news-title"></p></div></div></div>
+          <div class="card-content"><span class="card-kicker" id="kicker">值得關注的新進展</span><h2 id="question">正在準備今天的小發現…</h2><p class="attribution" id="attribution" hidden></p><div id="answer" hidden><p id="answer-text"></p><div class="news-context" id="news-context" hidden><span>延伸閱讀 · 原文</span><p id="news-title"></p></div></div></div>
           <button class="reveal" id="reveal" disabled><span>看看這件事為什麼值得關注</span><span aria-hidden="true">↗</span></button>
           <a class="source" id="source" target="_blank" rel="noopener noreferrer" hidden>閱讀來源 <span aria-hidden="true">↗</span></a>
         </article>
         <div class="actions" id="actions" hidden><button class="again" id="again">↺ <span>稍後再看</span></button><button class="remember" id="remember"><span>下一個發現</span> <span aria-hidden="true">→</span></button></div>
+        <div class="review-entry" id="review-entry" hidden><button id="review-open" aria-haspopup="dialog" aria-controls="review-dialog">今日已讀</button></div>
         <p class="hint" id="hint">看看發生了什麼，再想想它意味著什麼。</p>
         <p class="feed-status" id="feed-status"></p>
         <p class="storage-notice" id="storage-notice" hidden>瀏覽器無法保存進度；這次仍可以正常學習。</p>
         <noscript>請啟用 JavaScript，即可翻卡學習。</noscript>
       </section>
     </main>
+    <dialog class="review-dialog" id="review-dialog" aria-labelledby="review-title">
+      <div class="review-heading"><div><span class="card-kicker">留給好奇心的足跡</span><h2 id="review-title">今日已讀</h2></div><button id="review-close" aria-label="關閉今日已讀" autofocus>關閉 <span aria-hidden="true">×</span></button></div>
+      <p class="review-note">隨時回來看看。不影響你的閱讀進度。</p>
+      <div id="review-list"></div>
+    </dialog>
     <footer><span>一點一點，就會不一樣。</span><span>MADE FOR CURIOUS MINDS <span aria-hidden="true">✧</span></span></footer>
   </body>
 </html>

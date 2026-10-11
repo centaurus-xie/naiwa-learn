@@ -5,7 +5,7 @@ export function dayKey(date = new Date()) {
 export function validCards(cards) {
   return Array.isArray(cards) && cards.length===5 && new Set(cards.map(c=>c?.id)).size===5
     && cards.every(c=>c && ['id','question','answer','category'].every(k=>typeof c[k]==='string' && c[k].trim() && c[k].length<=2000)
-      && ['sourceUrl','sourceName','publishedAt','newsTitle','evidence'].every(k=>c[k]===undefined || typeof c[k]==='string'));
+      && ['sourceUrl','sourceName','publishedAt','newsTitle','evidence','actor'].every(k=>c[k]===undefined || typeof c[k]==='string'));
 }
 
 export function feedStatus(feed) {
@@ -44,4 +44,8 @@ export function advance(state,remembered) {
   if(!state.queue.length) return state;
   const [id,...remaining]=state.queue;
   return {...state,queue:remembered?remaining:[...remaining,id],completed:remembered?[...state.completed,id]:state.completed};
+}
+
+export function completedCards(state) {
+  return state.completed.map(id=>state.cards.find(card=>card.id===id)).filter(Boolean);
 }

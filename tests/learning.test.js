@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createSession,advance,validCards,feedStatus} from '../learning.js';
+import {createSession,advance,validCards,feedStatus,completedCards} from '../learning.js';
 const cards=Array.from({length:5},(_,i)=>({id:String(i),question:'Q',answer:'A',category:'AI'}));
 test('review returns card to end without awarding progress',()=>{
   const s=advance(createSession(cards,'2026-10-11'),false);
@@ -62,4 +62,21 @@ test('unexpected status metadata cannot crash the page or expose prototype value
   for(const status of [{toString:null},[],42,'__proto__','toString']) {
     assert.equal(feedStatus({status}),'基礎概念卡 · 尚未生成 AI 新卡');
   }
+});
+test('read history follows completion order and never changes progress',()=>{
+  let state=createSession(cards,'2026-10-12');
+  state=advance(state,false);
+  state=advance(state,true);
+  state=advance(state,true);
+  const before=JSON.stringify(state);
+  assert.deepEqual(completedCards(state).map(c=>c.id),['1','2']);
+  assert.equal(JSON.stringify(state),before);
+});
+test('all five completed cards remain available to reread after reload',()=>{
+  let state=createSession(cards,'2026-10-12');
+  for(let i=0;i<5;i++) state=advance(state,true);
+  state=createSession(cards,'2026-10-12',JSON.parse(JSON.stringify(state)));
+  assert.equal(completedCards(state).length,5);
+  assert.equal(state.queue.length,0);
+  assert.deepEqual(completedCards(createSession(cards,'2026-10-13',state)),[]);
 });

@@ -66,11 +66,17 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(text,'Real article More text')
 
     def fixture(self):
-        sources = [{'url':f'https://huggingface.co/blog/test-{i}', 'sourceName':'Publisher',
-                    'publishedAt':'2026-10-10', 'title':f'Article {i}',
-                    'body':'The model improves efficiency using a smaller architecture.'} for i in range(5)]
-        cards = [{'sourceIndex':i, 'category':'模型效率', 'question':f'第{i}篇文章介紹以更小架構改善模型效率',
-                  'answer':'根據文章，模型採用更小的架構來提升運作效率；這是作者的說明，並不代表所有任務都有相同表現。\n\n這可能意味著，資源有限的部署情境值得重新評估較小模型的適用性。\n\n文章摘錄未提供具體測試條件，實際效益仍需依任務驗證。',
+        urls=['https://news.mit.edu/2026/test-0-1010','https://research.google/blog/test-1/',
+              'https://www.microsoft.com/en-us/research/blog/test-2/','https://huggingface.co/blog/test-3',
+              'https://research.google/blog/test-4/']
+        names=['MIT News','Google Research','Microsoft Research','Hugging Face','Google Research']
+        actors=['MIT','Google','Microsoft','Hugging Face','Google']
+        titles=['AI for medical diagnosis','AI for protein prediction','AI architecture improves efficiency','AI engineering tools','AI image generation']
+        sources = [{'url':urls[i], 'sourceName':names[i], 'platform':names[i],
+                    'publishedAt':'2026-10-10T00:00:00+00:00', 'title':titles[i],
+                    'body':actors[i]+': The model improves efficiency using a smaller architecture.'} for i in range(5)]
+        cards = [{'sourceIndex':i, 'actor':actors[i], 'category':'模型效率', 'question':f'第{i}篇文章介紹以更小架構改善模型效率',
+                  'answer':actors[i]+' 團隊在文章中說明，模型採用更小的架構來提升運作效率；這並不代表所有任務都有相同表現。\n\n這可能意味著，資源有限的部署情境值得重新評估較小模型的適用性。\n\n文章摘錄未提供具體測試條件，實際效益仍需依任務驗證。',
                   'evidence':'The model improves efficiency'} for i in range(5)]
         return sources, {'cards':cards}
 
@@ -87,6 +93,133 @@ class FeedTests(unittest.TestCase):
         response.url=updater.API_URL
         response.read.return_value=body
         return response
+
+    def rss(self, sources):
+        return ('<rss><channel>'+''.join('<item><title>'+s['title']+'</title><link>'+s['url']+'</link><pubDate>Sat, 10 Oct 2026 00:00:00 GMT</pubDate></item>' for s in sources)+'</channel></rss>').encode()
+
+    def test_each_platform_only_accepts_its_own_article_paths(self):
+        sources, _=self.fixture()
+        now=datetime(2026,10,12,tzinfo=timezone.utc)
+        xml=self.rss(sources).decode().replace('</channel>',
+            '<item><title>AI medical news</title><link>https://evil.example/2026/news</link><pubDate>Sat, 10 Oct 2026 00:00:00 GMT</pubDate></item></channel>')
+        for key, source in updater.SOURCES.items():
+            with self.subTest(source=key):
+                parsed=updater.parse_feed(xml,now,key)
+                self.assertTrue(parsed)
+                self.assertTrue(all(updater.allowed_article(a['url'],source) for a in parsed))
+
+    def test_atom_dates_tracking_duplicates_and_irrelevant_news(self):
+        xml='''<feed xmlns="http://www.w3.org/2005/Atom">
+        <entry><title>AI improves medical diagnosis</title><link href="https://research.google/blog/health/?utm_source=rss"/><published>2026-10-10T00:00:00Z</published></entry>
+        <entry><title>AI improves medical diagnosis</title><link href="https://research.google/blog/health/#section"/><updated>2026-10-10T00:00:00Z</updated></entry>
+        <entry><title>Office holiday hours</title><link href="https://research.google/blog/hours/"/><updated>2026-10-10T00:00:00Z</updated></entry>
+        <entry><title>AI from the future</title><link href="https://research.google/blog/future/"/><updated>2027-10-10T00:00:00Z</updated></entry>
+        </feed>'''
+        articles=updater.parse_feed(xml,datetime(2026,10,12,tzinfo=timezone.utc),'google')
+        self.assertEqual([a['url'] for a in articles],['https://research.google/blog/health/'])
+
+    def test_each_body_adapter_excludes_navigation_and_related_articles(self):
+        for source in updater.SOURCES.values():
+            classes=' '.join(source['classes'])
+            parser=updater.ArticleParser(source['classes'])
+            parser.feed('<nav>bad navigation</nav><div class="'+classes+'"><p>Real article</p><script>bad script</script><p>Supported facts</p></div><footer>bad footer</footer>')
+            with self.subTest(platform=source['name']):
+                self.assertEqual(updater.normalize(''.join(parser.text)),'Real article Supported facts')
+
+    def test_general_institution_announcements_do_not_fill_application_slots(self):
+        xml='''<rss><channel><item><title>University announces a new education initiative</title>
+        <link>https://news.mit.edu/2026/initiative-1010</link><pubDate>Sat, 10 Oct 2026 00:00:00 GMT</pubDate>
+        <description>New classrooms for science, AI and other subjects.</description></item></channel></rss>'''
+        self.assertEqual(updater.parse_feed(xml,datetime(2026,10,12,tzinfo=timezone.utc),'mit'),[])
+
+    def test_partial_feed_failure_does_not_discard_other_platforms(self):
+        from urllib.error import URLError
+        sources, _=self.fixture()
+        def fetch(url):
+            if url==updater.FEED: raise URLError('offline')
+            return self.rss(sources)
+        with patch.object(updater,'get_public',side_effect=fetch):
+            articles=updater.collect_articles(datetime(2026,10,12,tzinfo=timezone.utc))
+        self.assertEqual({a['platform'] for a in articles},{'MIT News','Google Research','Microsoft Research'})
+        self.assertEqual(len(articles),4)
+
+    def test_public_fetch_rejects_unknown_urls_and_cross_host_redirects(self):
+        with patch.object(updater,'urlopen') as call:
+            with self.assertRaisesRegex(ValueError,'publisher URL'): updater.get_public('https://evil.example/news')
+            call.assert_not_called()
+        response=self.api_response(b'private data')
+        response.url='https://evil.example/news'
+        with patch.object(updater,'urlopen',return_value=response),self.assertRaisesRegex(ValueError,'redirect'):
+            updater.get_public(updater.SOURCES['mit']['feed'])
+        response.read.assert_not_called()
+
+    def test_selection_balances_platforms_and_application_domains(self):
+        sources, _=self.fixture()
+        prolific=[{**sources[3],'url':sources[3]['url']+'-'+str(i),'title':'AI benchmark score '+str(i)} for i in range(20)]
+        with patch.object(updater,'article_body',return_value='supported body'):
+            selected=updater.select_sources(prolific+sources,[])
+        platforms=[s['platform'] for s in selected]
+        self.assertGreaterEqual(len(set(platforms)),3)
+        self.assertTrue(all(platforms.count(p)<=2 for p in platforms))
+        tags=[updater.article_tags(s) for s in selected]
+        self.assertGreaterEqual(len({domain for domain,_ in tags if domain}),2)
+        self.assertLessEqual(sum(benchmark for _,benchmark in tags),1)
+
+    def test_failed_body_is_replaced_without_rereading_successful_bodies(self):
+        sources, _=self.fixture()
+        failed=updater.choose_edition(sources,[])[0]
+        replacement={**failed,'url':failed['url']+'-replacement','publishedAt':'2026-10-09T00:00:00Z'}
+        def read(url):
+            if url==failed['url']: raise TimeoutError()
+            return 'supported body'
+        with patch.object(updater,'article_body',side_effect=read) as call:
+            selected=updater.select_sources(sources+[replacement],[])
+        self.assertNotIn(failed['url'],[s['url'] for s in selected])
+        requests=[c.args[0] for c in call.call_args_list]
+        self.assertEqual(len(requests),len(set(requests)))
+
+    def test_article_network_work_is_bounded_even_when_bodies_all_fail(self):
+        sources, _=self.fixture()
+        articles=[{**source,'url':source['url']+'-'+str(i)} for source in sources for i in range(8)]
+        with patch.object(updater,'article_body',side_effect=TimeoutError()) as call:
+            with self.assertRaises(ValueError): updater.select_sources(articles,[])
+        self.assertLessEqual(call.call_count,18)
+
+    def test_unbalanced_topics_roll_back_without_a_paid_model_call(self):
+        previous=self.edition()
+        previous['promptVersion']='discovery-brief-v2'
+        sources=[{**previous['cards'][3],'url':'https://huggingface.co/blog/only-'+str(i),
+                  'platform':'Hugging Face','publishedAt':'2026-10-10T00:00:00Z','title':'AI architecture '+str(i)} for i in range(5)]
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); (root/'data').mkdir()
+            target=root/'data/cards.json'; target.write_text(json.dumps(previous))
+            with patch.object(updater,'ROOT',root),patch.dict('os.environ',{'LLM_API_KEY':'test-key'}),patch.object(updater,'collect_articles',return_value=sources),patch.object(updater,'generate') as paid:
+                self.assertEqual(updater.main(),0)
+            paid.assert_not_called()
+            after=json.loads(target.read_text())
+            self.assertEqual(after['status'],'content-retained')
+            self.assertEqual(after['cards'],previous['cards'])
+            self.assertEqual(after['generatedAt'],previous['generatedAt'])
+
+    def test_actor_must_be_named_supported_and_introduced_in_first_paragraph(self):
+        for kind in ['generic','invented','substring','missing-introduction']:
+            sources, raw=self.fixture()
+            if kind=='generic': raw['cards'][0]['actor']='作者'
+            elif kind=='invented': raw['cards'][0]['actor']='Imaginary Lab'
+            elif kind=='substring':
+                sources[0]['body']=sources[0]['body'].replace('MIT','Limitations')
+                sources[0]['sourceName']='Independent Lab'
+            else: raw['cards'][0]['answer']=raw['cards'][0]['answer'].replace('MIT','某團隊',1)
+            with self.subTest(kind=kind),self.assertRaisesRegex(ValueError,'attribution'):
+                updater.validate_cards(raw,sources,[])
+        sources, raw=self.fixture()
+        raw['cards'][0]['answer']=raw['cards'][0]['answer'].replace('\n','\r\n')
+        self.assertEqual(updater.validate_cards(raw,sources,[])[0]['actor'],'MIT')
+
+    def test_model_cannot_turn_multiple_cards_into_benchmark_headlines(self):
+        sources, raw=self.fixture()
+        for i in range(2): raw['cards'][i]['question']=f'第{i}個模型在新基準評測中的排名進展'
+        with self.assertRaisesRegex(ValueError,'benchmark headlines'): updater.validate_cards(raw,sources,[])
 
     def test_bad_completion_envelopes_do_not_start_paid_revisions(self):
         sources, _ = self.fixture()
@@ -199,7 +332,7 @@ class FeedTests(unittest.TestCase):
     def test_pipeline_repair_publish_skip_then_network_rollback(self):
         from urllib.error import URLError
         sources, valid = self.fixture()
-        body='<div class="blog-content"><p>'+sources[0]['body']*8+'</p></div>'
+        body='<div class="blog-content news-article--content--body rich-text single-post__content"><p>'+''.join(s['body'] for s in sources)*8+'</p></div>'
         feed='<rss><channel>'+''.join(
             '<item><title>'+s['title']+'</title><link>'+s['url']+'</link><pubDate>Sat, 10 Oct 2026 00:00:00 GMT</pubDate></item>' for s in sources)+'</channel></rss>'
         invalid=json.loads(json.dumps(valid))
@@ -216,7 +349,7 @@ class FeedTests(unittest.TestCase):
             previous=self.edition()
             previous['sourceHistory']=[]
             target.write_text(json.dumps(previous))
-            with patch.object(updater,'ROOT',root),patch.object(updater,'datetime',FrozenDateTime),patch.dict('os.environ',{'LLM_API_KEY':'test-key'}),patch.object(updater,'get_public',side_effect=lambda url: (feed if url==updater.FEED else body).encode()),patch.object(updater,'api_open',side_effect=responses) as api:
+            with patch.object(updater,'ROOT',root),patch.object(updater,'datetime',FrozenDateTime),patch.dict('os.environ',{'LLM_API_KEY':'test-key'}),patch.object(updater,'get_public',side_effect=lambda url: (feed if url in [s['feed'] for s in updater.SOURCES.values()] else body).encode()),patch.object(updater,'api_open',side_effect=responses) as api:
                 self.assertEqual(updater.main(),0)
                 published=json.loads(target.read_text())
                 self.assertTrue(updater.valid_edition(published))
@@ -259,7 +392,7 @@ class FeedTests(unittest.TestCase):
     def test_no_news_does_not_call_paid_api(self):
         sources, _ = self.fixture()
         previous={'mode':'llm','promptVersion':updater.PROMPT_VERSION,'sourceHistory':[s['url'] for s in sources],'cards':['old']}
-        with patch.object(updater,'get_public',return_value=b'feed'), patch.object(updater,'parse_feed',return_value=sources), patch.object(updater,'generate') as generate:
+        with patch.object(updater,'collect_articles',return_value=sources), patch.object(updater,'generate') as generate:
             result, changed = updater.refresh(previous,datetime(2026,10,11,tzinfo=timezone.utc),'test-key')
         self.assertFalse(changed)
         self.assertEqual(result['cards'],['old'])
@@ -269,7 +402,7 @@ class FeedTests(unittest.TestCase):
     def test_at_most_one_generation_per_hong_kong_day(self):
         sources, _ = self.fixture()
         previous={'mode':'llm','promptVersion':updater.PROMPT_VERSION,'generatedAt':'2026-10-10T23:00:00+00:00','cards':['old']}
-        with patch.object(updater,'get_public',return_value=b'feed'), patch.object(updater,'parse_feed',return_value=sources), patch.object(updater,'generate') as generate:
+        with patch.object(updater,'collect_articles',return_value=sources), patch.object(updater,'generate') as generate:
             result, changed = updater.refresh(previous,datetime(2026,10,11,1,tzinfo=timezone.utc),'test-key')
         self.assertFalse(changed)
         self.assertEqual(result['status'],'already-generated-today')
@@ -294,7 +427,7 @@ class FeedTests(unittest.TestCase):
         sources, result = self.fixture()
         cards = updater.validate_cards(result,sources,[])
         previous={'cards':[], 'mode':'llm', 'promptVersion':updater.PROMPT_VERSION, 'sourceHistory':['https://huggingface.co/blog/older']}
-        with patch.object(updater,'get_public',return_value=b'feed'), patch.object(updater,'parse_feed',return_value=sources), patch.object(updater,'article_body',return_value=sources[0]['body']), patch.object(updater,'generate',return_value=cards) as generate:
+        with patch.object(updater,'collect_articles',return_value=sources), patch.object(updater,'article_body',return_value=sources[0]['body']), patch.object(updater,'generate',return_value=cards) as generate:
             payload, changed = updater.refresh(previous,datetime(2026,10,11,tzinfo=timezone.utc),'test-key')
         self.assertTrue(changed)
         self.assertEqual(len(payload['cards']),5)
@@ -307,7 +440,7 @@ class FeedTests(unittest.TestCase):
         cards = updater.validate_cards(result,sources,[])
         previous={'mode':'llm','generatedAt':'2026-10-11T00:00:00+00:00',
                   'sourceHistory':[s['url'] for s in sources], 'cards':['old exam cards']}
-        with patch.object(updater,'get_public',return_value=b'feed'), patch.object(updater,'parse_feed',return_value=sources), patch.object(updater,'article_body',return_value=sources[0]['body']), patch.object(updater,'generate',return_value=cards) as generate:
+        with patch.object(updater,'collect_articles',return_value=sources), patch.object(updater,'article_body',return_value=sources[0]['body']), patch.object(updater,'generate',return_value=cards) as generate:
             payload, changed = updater.refresh(previous,datetime(2026,10,11,1,tzinfo=timezone.utc),'test-key')
         self.assertTrue(changed)
         self.assertEqual(payload['promptVersion'],updater.PROMPT_VERSION)
@@ -333,6 +466,8 @@ class FeedTests(unittest.TestCase):
         payload=json.loads(request.data)
         self.assertEqual(payload['model'],'deepseek-flash')
         self.assertEqual(payload['response_format'],{'type':'json_object'})
+        self.assertIn('教師模型',payload['messages'][0]['content'])
+        self.assertIn('不能把發布平台當成研發者',payload['messages'][0]['content'])
         self.assertEqual(len(cards),5)
         response.read.return_value=json.dumps({'choices':[{'finish_reason':'length'}]}).encode()
         with patch.object(updater,'api_open',return_value=response) as call, self.assertRaises(updater.ContentRejected):

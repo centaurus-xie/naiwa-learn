@@ -1,4 +1,4 @@
-import { createSession, advance, dayKey, validCards, feedStatus } from './learning.js';
+import { createSession, advance, dayKey, validCards, feedStatus, completedCards } from './learning.js';
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'naiwa-learning-v1';
@@ -20,6 +20,8 @@ function safeSource(value) {
 function render() {
   revealed = false;
   const count = state.completed.length;
+  $('review-entry').hidden=count===0;
+  $('review-open').textContent=`今日已讀 · ${count} ↗`;
   $('progress').replaceChildren(...Array.from({length:state.total}, (_, i) => {
     const dot = document.createElement('span');
     dot.className = i < count ? 'done' : i === count ? 'active' : '';
@@ -54,6 +56,8 @@ function render() {
   const card = state.cards.find(c => c.id === state.queue[0]);
   $('category').textContent=card.category;
   $('question').textContent=card.question;
+  $('attribution').hidden=!card.actor;
+  $('attribution').textContent=card.actor ? `本篇提及 · ${card.actor}` : '';
   $('answer-text').textContent=card.answer;
   $('answer').hidden=true;
   $('source').hidden=true;
@@ -94,6 +98,31 @@ function respond(remembered) {
 }
 $('again').addEventListener('click',()=>respond(false));
 $('remember').addEventListener('click',()=>respond(true));
+
+function openReview() {
+  if(!state?.completed.length) return;
+  $('review-title').textContent=`今日已讀 · ${state.completed.length}`;
+  $('review-list').replaceChildren(...completedCards(state).map((card,index)=>{
+    const item=document.createElement('details');
+    item.className='review-item'; item.open=index===0;
+    const title=document.createElement('summary'); title.textContent=card.question;
+    const meta=document.createElement('p'); meta.className='attribution';
+    meta.textContent=[card.category,card.actor || card.sourceName].filter(Boolean).join(' · ');
+    const copy=document.createElement('p'); copy.className='review-copy'; copy.textContent=card.answer;
+    item.append(title,meta,copy);
+    const url=safeSource(card.sourceUrl);
+    if(url) {
+      const source=document.createElement('a'); source.className='source'; source.href=url;
+      source.target='_blank'; source.rel='noopener noreferrer';
+      source.textContent=`${card.sourceName || '閱讀原文'}${card.publishedAt ? ' · '+card.publishedAt.slice(0,10) : ''} ↗`;
+      item.append(source);
+    }
+    return item;
+  }));
+  $('review-dialog').showModal();
+}
+$('review-open').addEventListener('click',openReview);
+$('review-close').addEventListener('click',()=>$('review-dialog').close());
 
 async function start() {
   today = dayKey();
