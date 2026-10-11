@@ -18,7 +18,12 @@ ROOT = Path(__file__).resolve().parents[1]
 FEED = 'https://huggingface.co/blog/feed.xml'
 API_URL = 'https://api.deepseek.com/chat/completions'
 MODEL = 'deepseek-flash'
-PROMPT_VERSION = 'discovery-brief-v1'
+PROMPT_VERSION = 'discovery-brief-v2'
+MAX_GENERATION_ATTEMPTS = 3
+
+
+class ContentRejected(ValueError):
+    """Model content still invalid after bounded editorial revisions."""
 PUBLISHERS = {'allenai', 'nvidia', 'microsoft', 'LiquidAI', 'tiiuae', 'ServiceNow-AI'}
 
 
@@ -111,6 +116,7 @@ def generate(articles, previous_questions, api_key):
 為相容既有資料，欄位仍叫 question 和 answer，但內容必須是「新聞式標題」與「編輯導讀」，不是問題和答案：
 question：12–80 字的具體陳述句標題，直接告訴讀者發生了什麼，不使用問號或懸念式設問。不用「顛覆／革命性／改變一切」等空泛宣傳。
 answer：80–320 字，分成三個短段落，以空行分隔，自然涵蓋以下內容，不加制式小標或編號：
+長度按 Python len(answer.strip()) 計算：中文、英文字母、空格、標點與換行都算字元。請以 150–240 字元為目標，三段各約 50–80 字元，避免接近上下限。輸出前逐卡自查長度，過長就刪除次要背景與重複措辭，過短就補充正文支持的具體機制；不得為湊字數新增事實。
 第一段：有什麼新進展，以及它如何運作或解決什麼實際問題。
 第二段：一個具體 insight——相對於原來的做法，它改變了哪個取捨、誰可能受益、能用在什麼情境。不要只寫「提升效率／降低成本／很有潛力」。
 第三段：重要限制、驗證條件或接下來值得觀察的事；正文未提供的條件要明說未提供，不能自行編造。
@@ -126,17 +132,43 @@ category：2–12 字，使用有辨識度的主題標籤。
                'max_tokens': 4000, 'temperature': 0.3, 'response_format': {'type': 'json_object'},
                'messages': [{'role': 'system', 'content': system},
                             {'role': 'user', 'content': json.dumps({'articles': articles, 'previousQuestions': previous_questions}, ensure_ascii=False)}]}
-    request = Request(API_URL, data=json.dumps(payload).encode(),
-                      headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api_key})
-    try:
-        with urlopen(request, timeout=180) as response:
-            result = json.loads(response.read(1_000_000))
-    except HTTPError as error:
-        raise RuntimeError('DeepSeek returned HTTP ' + str(error.code)) from None
-    choice = result['choices'][0]
-    if choice.get('finish_reason') != 'stop':
-        raise ValueError('Incomplete model output')
-    return validate_cards(json.loads(choice['message']['content']), articles, previous_questions)
+    for attempt in range(MAX_GENERATION_ATTEMPTS):
+        request = Request(API_URL, data=json.dumps(payload).encode(),
+                          headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api_key})
+        try:
+            with urlopen(request, timeout=180) as response:
+                result = json.loads(response.read(1_000_000))
+        except HTTPError as error:
+            raise RuntimeError('DeepSeek returned HTTP ' + str(error.code)) from None
+        choice = result['choices'][0]
+        content = choice.get('message', {}).get('content')
+        parsed = None
+        try:
+            if choice.get('finish_reason') != 'stop':
+                raise ValueError('Incomplete model output')
+            if not isinstance(content, str):
+                raise ValueError('Invalid card')
+            parsed = json.loads(content)
+            return validate_cards(parsed, articles, previous_questions)
+        except ValueError as error:
+            reason = failure_reason(error)
+            if attempt + 1 == MAX_GENERATION_ATTEMPTS:
+                raise ContentRejected(reason) from None
+            details = []
+            if isinstance(parsed, dict) and isinstance(parsed.get('cards'), list):
+                for index, card in enumerate(parsed['cards'][:5]):
+                    if isinstance(card, dict):
+                        sizes = {field: len(card[field].strip()) if isinstance(card.get(field), str) else None
+                                 for field in ['question', 'answer', 'category', 'evidence']}
+                        details.append({'cardIndex': index, 'lengths': sizes})
+            # Keep article context and the rejected draft; return only safe diagnostics.
+            if isinstance(content, str):
+                payload['messages'].append({'role': 'assistant', 'content': content[:30000]})
+            payload['messages'].append({'role': 'user', 'content':
+                '請修訂上一版完整五張卡片，不要只回傳修改部分。校驗結果：' + reason +
+                '\n逐卡字元數：' + json.dumps(details, ensure_ascii=False) +
+                '\nanswer 請壓在 150–240 字元（含英文、標點和換行），保留三段及原文依據；其他規則不變。只輸出完整 JSON。'})
+            print('Revising model draft (' + str(attempt + 1) + '/2).')
 
 
 def validate_cards(result, articles, previous_questions):
@@ -274,6 +306,10 @@ def main():
     now = datetime.now(timezone.utc)
     try:
         payload, generated = refresh(previous, now, os.environ.get('LLM_API_KEY', '').strip())
+    except ContentRejected as error:
+        print('Editorial revisions exhausted; keeping the previous edition.')
+        write_payload(target, {**previous, 'checkedAt': now.isoformat(), 'status': 'content-retained'})
+        return 0
     except Exception as error:
         report_failure(failure_reason(error))
         write_payload(target, {**previous, 'checkedAt': now.isoformat(), 'status': 'update-failed'})

@@ -123,6 +123,7 @@ async function start() {
   if(feed.status==='no-new-articles') label+=' · 暫無新文章';
   if(feed.status==='already-generated-today') label+=' · 今日卡片已備妥';
   if(feed.status==='update-failed') label+=' · 更新未成功，保留原卡';
+  if(feed.status==='content-retained') label+=' · 新內容仍在整理，沿用上一版';
   if(feed.offline) label='目前離線，繼續本機保存的卡片';
   $('feed-status').textContent=label;
 }

@@ -2,6 +2,8 @@ import importlib.util
 import json
 import unittest
 import tempfile
+import contextlib
+import io
 from unittest.mock import patch
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +14,26 @@ updater = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(updater)
 
 class FeedTests(unittest.TestCase):
+    def setUp(self):
+        # Tests must never write simulated failures to a real Actions step.
+        self.environment = patch.dict('os.environ', {'GITHUB_OUTPUT':'', 'GITHUB_STEP_SUMMARY':'', 'LLM_API_KEY':''})
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+        capture = contextlib.redirect_stderr(io.StringIO())
+        capture.__enter__()
+        self.addCleanup(capture.__exit__, None, None, None)
+
+    def test_mock_missing_key_does_not_pollute_real_actions_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory)/'real-summary'
+            output = Path(directory)/'real-output'
+            with patch.dict('os.environ', {'GITHUB_STEP_SUMMARY':str(summary), 'GITHUB_OUTPUT':str(output)}):
+                result = unittest.TestResult()
+                FeedTests('test_missing_secret_preserves_edition_and_returns_failure').run(result)
+            self.assertTrue(result.wasSuccessful())
+            self.assertFalse(summary.exists())
+            self.assertFalse(output.exists())
+
     def test_diagnostics_identify_validation_without_echoing_untrusted_errors(self):
         self.assertIn('80–320',updater.failure_reason(ValueError('Invalid card field: answer')))
         self.assertIn('逐字',updater.failure_reason(ValueError('Evidence not found in source')))
@@ -152,8 +174,44 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(payload['response_format'],{'type':'json_object'})
         self.assertEqual(len(cards),5)
         response.read.return_value=json.dumps({'choices':[{'finish_reason':'length'}]}).encode()
-        with patch.object(updater,'urlopen',return_value=response), self.assertRaises(ValueError):
+        with patch.object(updater,'urlopen',return_value=response) as call, self.assertRaises(updater.ContentRejected):
             updater.generate(sources,[],'test-key')
+        self.assertEqual(call.call_count,3)
+
+    def test_length_repair_succeeds_with_one_revision(self):
+        from unittest.mock import MagicMock
+        sources, valid = self.fixture()
+        invalid=json.loads(json.dumps(valid))
+        invalid['cards'][0]['answer']='過長的導讀'*100
+        responses=[]
+        for draft in [invalid, valid]:
+            response=MagicMock()
+            response.__enter__.return_value=response
+            response.read.return_value=json.dumps({'choices':[{'finish_reason':'stop','message':{'content':json.dumps(draft)}}]}).encode()
+            responses.append(response)
+        with patch.object(updater,'urlopen',side_effect=responses) as call:
+            result=updater.generate(sources,[],'test-key')
+        self.assertEqual(len(result),5)
+        self.assertEqual(call.call_count,2)
+        repair=json.loads(call.call_args.args[0].data)['messages'][-1]['content']
+        self.assertIn('80–320',repair)
+        self.assertIn('"answer": 500',repair)
+
+    def test_content_rollback_is_success_and_keeps_previous_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'data').mkdir()
+            target=root/'data/cards.json'
+            previous={'editionId':'old','generatedAt':'2026-10-10','cards':['old']}
+            target.write_text(json.dumps(previous))
+            with patch.object(updater,'ROOT',root), patch.object(updater,'refresh',side_effect=updater.ContentRejected('length')), patch.object(updater,'report_failure') as report:
+                self.assertEqual(updater.main(),0)
+            result=json.loads(target.read_text())
+            self.assertEqual(result['editionId'],'old')
+            self.assertEqual(result['cards'],['old'])
+            self.assertEqual(result['generatedAt'],'2026-10-10')
+            self.assertEqual(result['status'],'content-retained')
+            report.assert_not_called()
 
 if __name__ == '__main__':
     unittest.main()
