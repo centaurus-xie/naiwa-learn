@@ -25,7 +25,7 @@ function render() {
     dot.className = i < count ? 'done' : i === count ? 'active' : '';
     return dot;
   }));
-  $('progress').setAttribute('aria-label', `已記住 ${count} 張，共 ${state.total} 張`);
+  $('progress').setAttribute('aria-label', `已讀 ${count} 張，共 ${state.total} 張`);
   $('counter').replaceChildren(document.createTextNode(String(Math.min(count + 1, state.total)).padStart(2,'0') + ' '));
   const denominator = document.createElement('span');
   denominator.textContent = `/ ${String(state.total).padStart(2,'0')}`;
@@ -47,7 +47,7 @@ function render() {
     const copy = document.createElement('p'); copy.textContent='又多懂了一點點。\n好奇心，我們明天繼續。'; copy.style.whiteSpace='pre-line';
     $('card').append(spark, heading, copy);
     $('guide-message').textContent='做得好！明天我還在這裡。';
-    $('session-label').textContent='今天的五張，都記住了';
+    $('session-label').textContent='今天的五個發現，都看過了';
     $('hint').textContent='休息一下，讓新知慢慢發芽。';
     return;
   }
@@ -59,10 +59,10 @@ function render() {
   $('source').hidden=true;
   $('reveal').hidden=false;
   $('reveal').disabled=false;
-  $('kicker').textContent='一個小問題';
+  $('kicker').textContent='值得關注的新進展';
   $('news-context').hidden=!card.newsTitle;
   $('news-title').textContent=card.newsTitle || '';
-  $('hint').textContent='不用急著知道答案，好奇就是開始。';
+  $('hint').textContent='看看發生了什麼，再想想它意味著什麼。';
   const url=safeSource(card.sourceUrl);
   if(url) $('source').href=url; else $('source').removeAttribute('href');
   $('source').textContent=`${card.sourceName || '閱讀來源'}${card.publishedAt ? ' · '+card.publishedAt.slice(0,10) : ''} ↗`;
@@ -75,9 +75,9 @@ function revealCard() {
   $('reveal').hidden=true;
   $('actions').hidden=false;
   $('card').classList.add('is-revealed');
-  $('kicker').textContent='原來如此';
-  $('guide-message').textContent='懂一點點，就很棒了。';
-  $('hint').textContent='「再看看」會把這張留到稍後複習。';
+  $('kicker').textContent='進展、意義與觀察';
+  $('guide-message').textContent='這件事，可能和你想的有點不一樣。';
+  $('hint').textContent='感興趣可以讀原文，或留到稍後再看。';
   $('remember').focus({preventScroll:true});
 }
 $('reveal').addEventListener('click', revealCard);

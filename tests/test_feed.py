@@ -31,8 +31,8 @@ class FeedTests(unittest.TestCase):
         sources = [{'url':f'https://huggingface.co/blog/test-{i}', 'sourceName':'Publisher',
                     'publishedAt':'2026-10-10', 'title':f'Article {i}',
                     'body':'The model improves efficiency using a smaller architecture.'} for i in range(5)]
-        cards = [{'sourceIndex':i, 'category':'模型效率', 'question':f'第{i}篇文章如何改善模型的運作效率？',
-                  'answer':'根據文章，模型採用更小的架構來提升運作效率；這是作者的說明，並不代表所有任務都有相同表現。',
+        cards = [{'sourceIndex':i, 'category':'模型效率', 'question':f'第{i}篇文章介紹以更小架構改善模型效率',
+                  'answer':'根據文章，模型採用更小的架構來提升運作效率；這是作者的說明，並不代表所有任務都有相同表現。\n\n這可能意味著，資源有限的部署情境值得重新評估較小模型的適用性。\n\n文章摘錄未提供具體測試條件，實際效益仍需依任務驗證。',
                   'evidence':'The model improves efficiency'} for i in range(5)]
         return sources, {'cards':cards}
 
@@ -60,7 +60,7 @@ class FeedTests(unittest.TestCase):
 
     def test_no_news_does_not_call_paid_api(self):
         sources, _ = self.fixture()
-        previous={'mode':'llm','sourceHistory':[s['url'] for s in sources],'cards':['old']}
+        previous={'mode':'llm','promptVersion':updater.PROMPT_VERSION,'sourceHistory':[s['url'] for s in sources],'cards':['old']}
         with patch.object(updater,'get_public',return_value=b'feed'), patch.object(updater,'parse_feed',return_value=sources), patch.object(updater,'generate') as generate:
             result, changed = updater.refresh(previous,datetime(2026,10,11,tzinfo=timezone.utc),'test-key')
         self.assertFalse(changed)
@@ -70,7 +70,7 @@ class FeedTests(unittest.TestCase):
 
     def test_at_most_one_generation_per_hong_kong_day(self):
         sources, _ = self.fixture()
-        previous={'mode':'llm','generatedAt':'2026-10-10T23:00:00+00:00','cards':['old']}
+        previous={'mode':'llm','promptVersion':updater.PROMPT_VERSION,'generatedAt':'2026-10-10T23:00:00+00:00','cards':['old']}
         with patch.object(updater,'get_public',return_value=b'feed'), patch.object(updater,'parse_feed',return_value=sources), patch.object(updater,'generate') as generate:
             result, changed = updater.refresh(previous,datetime(2026,10,11,1,tzinfo=timezone.utc),'test-key')
         self.assertFalse(changed)
@@ -95,7 +95,7 @@ class FeedTests(unittest.TestCase):
     def test_successful_refresh_uses_bodies_and_preserves_history(self):
         sources, result = self.fixture()
         cards = updater.validate_cards(result,sources,[])
-        previous={'cards':[], 'mode':'llm', 'sourceHistory':['https://huggingface.co/blog/older']}
+        previous={'cards':[], 'mode':'llm', 'promptVersion':updater.PROMPT_VERSION, 'sourceHistory':['https://huggingface.co/blog/older']}
         with patch.object(updater,'get_public',return_value=b'feed'), patch.object(updater,'parse_feed',return_value=sources), patch.object(updater,'article_body',return_value=sources[0]['body']), patch.object(updater,'generate',return_value=cards) as generate:
             payload, changed = updater.refresh(previous,datetime(2026,10,11,tzinfo=timezone.utc),'test-key')
         self.assertTrue(changed)
@@ -103,6 +103,23 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(len(payload['sourceHistory']),6)
         self.assertIn('body',generate.call_args.args[0][0])
         self.assertNotIn('test-key',json.dumps(payload))
+
+    def test_old_prompt_regenerates_even_on_same_day_with_same_articles(self):
+        sources, result = self.fixture()
+        cards = updater.validate_cards(result,sources,[])
+        previous={'mode':'llm','generatedAt':'2026-10-11T00:00:00+00:00',
+                  'sourceHistory':[s['url'] for s in sources], 'cards':['old exam cards']}
+        with patch.object(updater,'get_public',return_value=b'feed'), patch.object(updater,'parse_feed',return_value=sources), patch.object(updater,'article_body',return_value=sources[0]['body']), patch.object(updater,'generate',return_value=cards) as generate:
+            payload, changed = updater.refresh(previous,datetime(2026,10,11,1,tzinfo=timezone.utc),'test-key')
+        self.assertTrue(changed)
+        self.assertEqual(payload['promptVersion'],updater.PROMPT_VERSION)
+        generate.assert_called_once()
+
+    def test_rejects_exam_question_headlines(self):
+        sources, result = self.fixture()
+        result['cards'][0]['question']='這篇文章如何改善模型的運作效率？'
+        with self.assertRaisesRegex(ValueError,'declarative'):
+            updater.validate_cards(result,sources,[])
 
     def test_api_contract_and_truncated_output(self):
         from unittest.mock import MagicMock
