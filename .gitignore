@@ -3,3 +3,5 @@ node_modules/
 _site/
 __pycache__/
 *.pyc
+data/cards.seed.json
+data/cards.tmp

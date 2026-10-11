@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createSession,advance} from '../learning.js';
+import {createSession,advance,validCards,feedStatus} from '../learning.js';
 const cards=Array.from({length:5},(_,i)=>({id:String(i),question:'Q',answer:'A',category:'AI'}));
 test('review returns card to end without awarding progress',()=>{
   const s=advance(createSession(cards,'2026-10-11'),false);
@@ -17,8 +17,8 @@ test('five remembered cards complete the session and survive reload',()=>{
 });
 test('a new edition replaces stale same-day cards',()=>{
   const s=advance(createSession(cards,'2026-10-11',null,'old'),true);
-  const fresh=createSession([{...cards[0],id:'new'}],'2026-10-11',s,'new');
-  assert.deepEqual(fresh.queue,['new']);
+  const fresh=createSession(cards.map(c=>({...c,id:'new-'+c.id})),'2026-10-11',s,'new');
+  assert.deepEqual(fresh.queue,['new-0','new-1','new-2','new-3','new-4']);
   assert.deepEqual(fresh.completed,[]);
 });
 test('checking the same edition preserves progress',()=>{
@@ -29,4 +29,37 @@ test('corrupt storage resets safely',()=>{
   const s=createSession(cards,'2026-10-11');
   s.queue=['bad'];
   assert.equal(createSession(cards,'2026-10-11',s).queue.length,5);
+});
+test('corrupt saved card content cannot replace a valid online edition',()=>{
+  const s=createSession(cards,'2026-10-11',null,'edition');
+  s.cards=cards.map(c=>({...c}));
+  s.cards[0].answer='wrong saved content';
+  assert.equal(createSession(cards,'2026-10-11',s,'edition').cards[0].answer,'A');
+});
+test('legacy editions without metadata still refresh when content changes',()=>{
+  const s=advance(createSession(cards,'2026-10-11'),true);
+  const fresh=createSession(cards.map(c=>({...c,answer:'new answer'})),'2026-10-11',s);
+  assert.equal(fresh.completed.length,0);
+  assert.equal(fresh.cards[0].answer,'new answer');
+});
+test('reject damaged feeds rather than silently showing fewer cards',()=>{
+  for(const damaged of [null,[],cards.slice(0,4),[...cards.slice(0,4),null],cards.map(c=>({...c,id:'duplicate'})),cards.map(c=>({...c,publishedAt:42}))]){
+    assert.equal(validCards(damaged),false);
+    assert.throws(()=>createSession(damaged,'2026-10-11'));
+  }
+});
+test('bad timestamps never interrupt reading or claim a new release',()=>{
+  const status=feedStatus({generatedAt:'garbage',checkedAt:{},status:'content-retained'});
+  assert.ok(!status.includes('新卡發布'));
+  assert.ok(status.includes('沿用上一版'));
+});
+test('fallback status and successful publication are distinct',()=>{
+  assert.ok(feedStatus({offline:true,generatedAt:'2026-10-11T00:00:00Z'}).includes('本機保存'));
+  assert.ok(feedStatus({generatedAt:'2026-10-11T00:00:00Z',checkedAt:'2026-10-11T01:00:00Z'}).includes('新卡發布'));
+  assert.ok(feedStatus({status:'update-failed'}).includes('更新未成功'));
+});
+test('unexpected status metadata cannot crash the page or expose prototype values',()=>{
+  for(const status of [{toString:null},[],42,'__proto__','toString']) {
+    assert.equal(feedStatus({status}),'基礎概念卡 · 尚未生成 AI 新卡');
+  }
 });

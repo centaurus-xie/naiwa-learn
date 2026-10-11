@@ -34,8 +34,11 @@ jobs:
         run: |
           npm test
           python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Preserve checked-out fallback edition
+        run: cp data/cards.json data/cards.seed.json
       - name: Restore last successful feed
         uses: actions/cache/restore@v4
+        continue-on-error: true
         with:
           path: data/cards.json
           key: cards-${{ github.run_id }}-${{ github.run_attempt }}
@@ -52,14 +55,18 @@ jobs:
       - name: Cache current feed
         if: steps.refresh.outcome == 'success'
         uses: actions/cache/save@v4
+        continue-on-error: true
         with:
           path: data/cards.json
           key: cards-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Prepare public files
         run: |
+          python3 -c 'from pathlib import Path; from scripts.update_cards import read_edition; assert read_edition(Path("data/cards.json")) is not None, "No valid cards to deploy"'
           mkdir -p _site
           cp index.html styles.css app.js learning.js _site/
-          cp -R assets data _site/
+          cp -R assets _site/
+          mkdir -p _site/data
+          cp data/cards.json _site/data/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -4,7 +4,7 @@ import unittest
 import tempfile
 import contextlib
 import io
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -74,6 +74,166 @@ class FeedTests(unittest.TestCase):
                   'evidence':'The model improves efficiency'} for i in range(5)]
         return sources, {'cards':cards}
 
+    def edition(self):
+        sources, raw = self.fixture()
+        return {'mode':'llm','promptVersion':updater.PROMPT_VERSION,'editionId':'stable',
+                'generatedAt':'2026-10-10T00:00:00+00:00',
+                'cards':updater.validate_cards(raw,sources,[]),
+                'sourceHistory':[s['url'] for s in sources],'questionHistory':[]}
+
+    def api_response(self, body):
+        response=MagicMock()
+        response.__enter__.return_value=response
+        response.url=updater.API_URL
+        response.read.return_value=body
+        return response
+
+    def test_bad_completion_envelopes_do_not_start_paid_revisions(self):
+        sources, _ = self.fixture()
+        for raw in [b'<html>service unavailable</html>',b'null',b'{"error":{}}',b'{"choices":[]}',b'{"choices":[null]}',b'x'*(updater.MAX_API_BYTES+1)]:
+            with self.subTest(body=raw[:50]), patch.object(updater,'api_open',return_value=self.api_response(raw)) as call:
+                with self.assertRaises(updater.APIResponseError):
+                    updater.generate(sources,[],'test-key')
+                self.assertEqual(call.call_count,1)
+
+    def test_http_auth_balance_and_network_failures_do_not_retry(self):
+        from urllib.error import HTTPError, URLError
+        sources, _ = self.fixture()
+        for error in [HTTPError(updater.API_URL,401,'unauthorized',{},None),HTTPError(updater.API_URL,402,'balance',{},None),URLError('offline'),TimeoutError()]:
+            with self.subTest(error=type(error).__name__), patch.object(updater,'api_open',side_effect=error) as call:
+                with self.assertRaises((RuntimeError,URLError,TimeoutError)):
+                    updater.generate(sources,[],'test-key')
+                self.assertEqual(call.call_count,1)
+
+    def test_empty_malformed_and_partial_model_drafts_are_bounded_revisions(self):
+        sources, _ = self.fixture()
+        for content in [None,'','{','{"cards":[]}','{"cards":[{}]}']:
+            raw=json.dumps({'choices':[{'finish_reason':'stop','message':{'content':content}}]}).encode()
+            with self.subTest(content=content), patch.object(updater,'api_open',return_value=self.api_response(raw)) as call:
+                with self.assertRaises(updater.ContentRejected):
+                    updater.generate(sources,[],'test-key')
+                self.assertEqual(call.call_count,3)
+
+    def test_rejects_one_paragraph_or_four_paragraph_drafts(self):
+        for count in [1,4]:
+            sources, raw=self.fixture()
+            raw['cards'][0]['answer']='\n\n'.join(['根據文章，較小架構可能適合資源有限的情境，但效益仍須依實際任務驗證。']*count)
+            # Keep length within 80–320, isolate paragraph validation.
+            if count==1: raw['cards'][0]['answer']=raw['cards'][0]['answer']*3
+            with self.subTest(count=count), self.assertRaisesRegex(ValueError,'three paragraphs'):
+                updater.validate_cards(raw,sources,[])
+
+    def test_cache_miss_recovers_published_edition_before_generation(self):
+        edition=self.edition()
+        with tempfile.TemporaryDirectory() as directory:
+            target=Path(directory)/'cards.json'
+            target.write_text('{corrupt')
+            response=self.api_response(json.dumps(edition).encode())
+            response.url=updater.PUBLISHED_FEED
+            with patch.object(updater,'urlopen',return_value=response):
+                recovered=updater.load_previous(target)
+            self.assertEqual(recovered['editionId'],'stable')
+            self.assertEqual(recovered['cards'],edition['cards'])
+
+    def test_valid_cached_ai_edition_does_not_fetch_published_copy(self):
+        edition=self.edition()
+        with tempfile.TemporaryDirectory() as directory:
+            target=Path(directory)/'cards.json'
+            target.write_text(json.dumps(edition))
+            with patch.object(updater,'urlopen') as request:
+                self.assertEqual(updater.load_previous(target),edition)
+            request.assert_not_called()
+
+    def test_corrupt_cache_and_offline_site_restore_checkout_seed(self):
+        from urllib.error import URLError
+        edition=self.edition()
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'data').mkdir()
+            target=root/'data/cards.json'
+            target.write_text('null')
+            (root/'data/cards.seed.json').write_text(json.dumps(edition))
+            with patch.object(updater,'ROOT',root),patch.object(updater,'urlopen',side_effect=URLError('offline')):
+                self.assertEqual(updater.load_previous(target),edition)
+
+    def test_corrupt_cache_seed_and_site_fall_back_to_curated_cards(self):
+        from urllib.error import URLError
+        concepts=json.loads((ROOT/'data/concepts.json').read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'data').mkdir()
+            target=root/'data/cards.json'
+            target.write_text('null')
+            (root/'data/cards.seed.json').write_text('{broken')
+            (root/'data/concepts.json').write_text(json.dumps(concepts))
+            with patch.object(updater,'ROOT',root),patch.object(updater,'urlopen',side_effect=URLError('offline')):
+                recovered=updater.load_previous(target)
+            self.assertTrue(updater.valid_edition(recovered))
+
+    def test_operational_failure_keeps_known_good_edition_atomic_and_truthful(self):
+        from urllib.error import URLError
+        edition=self.edition()
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'data').mkdir()
+            target=root/'data/cards.json'
+            target.write_text(json.dumps(edition))
+            with patch.object(updater,'ROOT',root),patch.object(updater,'refresh',side_effect=URLError('offline')):
+                self.assertEqual(updater.main(),1)
+            after=json.loads(target.read_text())
+            for field in ['cards','editionId','generatedAt','sourceHistory']:
+                self.assertEqual(after[field],edition[field])
+            self.assertEqual(after['status'],'update-failed')
+            self.assertFalse(target.with_suffix('.tmp').exists())
+
+    def test_invalid_cached_metadata_is_not_trusted(self):
+        edition=self.edition()
+        for change in [{'generatedAt':'not-a-date'},{'sourceHistory':'wrong'}, {'cards':[None]*5}]:
+            with self.subTest(change=list(change)):
+                self.assertFalse(updater.valid_edition({**edition,**change}))
+
+    def test_redirect_is_rejected_before_api_key_can_be_forwarded(self):
+        with self.assertRaises(updater.APIResponseError):
+            updater.NoAPIRedirect().redirect_request(None,None,302,'redirect',{},'https://other.example')
+
+    def test_pipeline_repair_publish_skip_then_network_rollback(self):
+        from urllib.error import URLError
+        sources, valid = self.fixture()
+        body='<div class="blog-content"><p>'+sources[0]['body']*8+'</p></div>'
+        feed='<rss><channel>'+''.join(
+            '<item><title>'+s['title']+'</title><link>'+s['url']+'</link><pubDate>Sat, 10 Oct 2026 00:00:00 GMT</pubDate></item>' for s in sources)+'</channel></rss>'
+        invalid=json.loads(json.dumps(valid))
+        invalid['cards'][0]['answer']='過長的導讀'*100
+        responses=[self.api_response(json.dumps({'choices':[{'finish_reason':'stop','message':{'content':json.dumps(d)}}]}).encode()) for d in [invalid,valid]]
+        class FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime(2026,10,11,1,tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'data').mkdir()
+            target=root/'data/cards.json'
+            previous=self.edition()
+            previous['sourceHistory']=[]
+            target.write_text(json.dumps(previous))
+            with patch.object(updater,'ROOT',root),patch.object(updater,'datetime',FrozenDateTime),patch.dict('os.environ',{'LLM_API_KEY':'test-key'}),patch.object(updater,'get_public',side_effect=lambda url: (feed if url==updater.FEED else body).encode()),patch.object(updater,'api_open',side_effect=responses) as api:
+                self.assertEqual(updater.main(),0)
+                published=json.loads(target.read_text())
+                self.assertTrue(updater.valid_edition(published))
+                self.assertNotEqual(published['editionId'],previous['editionId'])
+                self.assertEqual(published['status'],'updated')
+                self.assertEqual(api.call_count,2)
+                self.assertEqual(updater.main(),0)
+                self.assertEqual(json.loads(target.read_text())['status'],'already-generated-today')
+                self.assertEqual(api.call_count,2)
+                with patch.object(updater,'get_public',side_effect=URLError('offline')):
+                    self.assertEqual(updater.main(),1)
+                retained=json.loads(target.read_text())
+                self.assertEqual(retained['editionId'],published['editionId'])
+                self.assertEqual(retained['cards'],published['cards'])
+                self.assertEqual(retained['generatedAt'],published['generatedAt'])
+                self.assertEqual(retained['status'],'update-failed')
+
     def test_valid_sources_are_bound_by_code(self):
         sources, result = self.fixture()
         result['cards'][0]['sourceUrl']='https://evil.example'
@@ -122,7 +282,7 @@ class FeedTests(unittest.TestCase):
             target=root/'data/cards.json'
             previous={'editionId':'old','generatedAt':'2026-10-10','cards':['old']}
             target.write_text(json.dumps(previous))
-            with patch.object(updater,'ROOT',root), patch.dict('os.environ',{'LLM_API_KEY':''}), patch.object(updater,'get_public') as fetch:
+            with patch.object(updater,'ROOT',root), patch.object(updater,'load_previous',return_value=previous), patch.dict('os.environ',{'LLM_API_KEY':''}), patch.object(updater,'get_public') as fetch:
                 self.assertEqual(updater.main(),1)
             result=json.loads(target.read_text())
             self.assertEqual(result['cards'],previous['cards'])
@@ -164,8 +324,9 @@ class FeedTests(unittest.TestCase):
         sources, result = self.fixture()
         response=MagicMock()
         response.__enter__.return_value=response
+        response.url=updater.API_URL
         response.read.return_value=json.dumps({'choices':[{'finish_reason':'stop','message':{'content':json.dumps(result)}}]}).encode()
-        with patch.object(updater,'urlopen',return_value=response) as call:
+        with patch.object(updater,'api_open',return_value=response) as call:
             cards=updater.generate(sources,[],'test-key')
         request=call.call_args.args[0]
         self.assertEqual(request.full_url,updater.API_URL)
@@ -174,7 +335,7 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(payload['response_format'],{'type':'json_object'})
         self.assertEqual(len(cards),5)
         response.read.return_value=json.dumps({'choices':[{'finish_reason':'length'}]}).encode()
-        with patch.object(updater,'urlopen',return_value=response) as call, self.assertRaises(updater.ContentRejected):
+        with patch.object(updater,'api_open',return_value=response) as call, self.assertRaises(updater.ContentRejected):
             updater.generate(sources,[],'test-key')
         self.assertEqual(call.call_count,3)
 
@@ -187,9 +348,10 @@ class FeedTests(unittest.TestCase):
         for draft in [invalid, valid]:
             response=MagicMock()
             response.__enter__.return_value=response
+            response.url=updater.API_URL
             response.read.return_value=json.dumps({'choices':[{'finish_reason':'stop','message':{'content':json.dumps(draft)}}]}).encode()
             responses.append(response)
-        with patch.object(updater,'urlopen',side_effect=responses) as call:
+        with patch.object(updater,'api_open',side_effect=responses) as call:
             result=updater.generate(sources,[],'test-key')
         self.assertEqual(len(result),5)
         self.assertEqual(call.call_count,2)
@@ -204,7 +366,7 @@ class FeedTests(unittest.TestCase):
             target=root/'data/cards.json'
             previous={'editionId':'old','generatedAt':'2026-10-10','cards':['old']}
             target.write_text(json.dumps(previous))
-            with patch.object(updater,'ROOT',root), patch.object(updater,'refresh',side_effect=updater.ContentRejected('length')), patch.object(updater,'report_failure') as report:
+            with patch.object(updater,'ROOT',root), patch.object(updater,'load_previous',return_value=previous), patch.object(updater,'refresh',side_effect=updater.ContentRejected('length')), patch.object(updater,'report_failure') as report:
                 self.assertEqual(updater.main(),0)
             result=json.loads(target.read_text())
             self.assertEqual(result['editionId'],'old')

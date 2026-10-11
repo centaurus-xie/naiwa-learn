@@ -9,7 +9,7 @@ from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, build_opener, HTTPRedirectHandler
 from urllib.error import HTTPError, URLError
 from zoneinfo import ZoneInfo
 import xml.etree.ElementTree as ET
@@ -20,10 +20,28 @@ API_URL = 'https://api.deepseek.com/chat/completions'
 MODEL = 'deepseek-flash'
 PROMPT_VERSION = 'discovery-brief-v2'
 MAX_GENERATION_ATTEMPTS = 3
+PUBLISHED_FEED = 'https://centaurus-xie.github.io/naiwa-learn/data/cards.json'
+MAX_API_BYTES = 1_000_000
 
 
 class ContentRejected(ValueError):
     """Model content still invalid after bounded editorial revisions."""
+
+
+class APIResponseError(RuntimeError):
+    """The service response is not a supported completion envelope."""
+
+
+class NoAPIRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Reject before following a redirect, so Authorization stays at DeepSeek.
+        raise APIResponseError('Unexpected API redirect')
+
+
+def api_open(request, timeout):
+    return build_opener(NoAPIRedirect()).open(request, timeout=timeout)
+
+
 PUBLISHERS = {'allenai', 'nvidia', 'microsoft', 'LiquidAI', 'tiiuae', 'ServiceNow-AI'}
 
 
@@ -35,12 +53,91 @@ def normalize(value):
     return ' '.join(value.split())
 
 
+def iso_date(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        result = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        return result if result.tzinfo else None
+    except ValueError:
+        return None
+
+
+def valid_edition(payload):
+    """Validate a cached/deployed edition before using it as rollback state."""
+    if not isinstance(payload, dict) or not isinstance(payload.get('cards'), list) or len(payload['cards']) != 5:
+        return False
+    ids = set()
+    for card in payload['cards']:
+        if not isinstance(card, dict):
+            return False
+        if not all(isinstance(card.get(field), str) and card[field].strip()
+                   for field in ['id', 'question', 'answer', 'category']):
+            return False
+        if card['id'] in ids:
+            return False
+        ids.add(card['id'])
+        if any(len(card[field]) > 2000 for field in ['id', 'question', 'answer', 'category']):
+            return False
+        if any(field in card and not isinstance(card[field], str)
+               for field in ['sourceUrl', 'sourceName', 'publishedAt', 'newsTitle', 'evidence']):
+            return False
+    if payload.get('mode') == 'llm':
+        if not iso_date(payload.get('generatedAt')) or not isinstance(payload.get('editionId'), str) or not payload['editionId']:
+            return False
+        for field in ['sourceHistory', 'questionHistory']:
+            history = payload.get(field, [])
+            if not isinstance(history, list) or not all(isinstance(item, str) for item in history):
+                return False
+    return True
+
+
+def read_edition(path):
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+        return payload if valid_edition(payload) else None
+    except (OSError, ValueError, UnicodeError):
+        return None
+
+
+def load_previous(target):
+    cached = read_edition(target)
+    if cached and cached.get('mode') == 'llm':
+        return cached
+    # The workflow saves the checked-out edition before cache restore. Recover
+    # from the currently published site if cache is absent/evicted/corrupt.
+    try:
+        request = Request(PUBLISHED_FEED, headers={'User-Agent': 'Naiwa-Learning/2.0'})
+        with urlopen(request, timeout=15) as response:
+            if urlparse(response.url).netloc != 'centaurus-xie.github.io':
+                raise ValueError('Unexpected deployed feed redirect')
+            raw = response.read(MAX_API_BYTES + 1)
+        deployed = json.loads(raw) if len(raw) <= MAX_API_BYTES else None
+        if valid_edition(deployed) and deployed.get('mode') == 'llm':
+            print('Recovered the published edition after cache miss.')
+            return deployed
+    except (OSError, ValueError, UnicodeError):
+        pass
+    fallback = cached or read_edition(ROOT / 'data/cards.seed.json')
+    if fallback:
+        return fallback
+    # Last-resort curated cards still work offline, without a credential.
+    concepts = json.loads((ROOT / 'data/concepts.json').read_text(encoding='utf-8'))
+    fallback = {'cards': [{k: v for k, v in card.items() if k != 'keywords'} for card in concepts[:5]]}
+    if not valid_edition(fallback):
+        raise ValueError('No usable rollback edition')
+    return fallback
+
+
 def parse_feed(xml, now):
     articles, seen = [], set()
     for item in ET.fromstring(xml).findall('./channel/item'):
         title = (item.findtext('title') or '').strip()
         link = (item.findtext('link') or '').strip()
-        url = urlparse(link)
+        try:
+            url = urlparse(link)
+        except ValueError:
+            continue
         parts = url.path.strip('/').split('/')
         if url.scheme != 'https' or url.netloc != 'huggingface.co' or parts[0] != 'blog':
             continue
@@ -70,7 +167,7 @@ class ArticleParser(HTMLParser):
         self.text = []
 
     def handle_starttag(self, tag, attrs):
-        classes = dict(attrs).get('class', '').split()
+        classes = (dict(attrs).get('class') or '').split()
         active = 'blog-content' in classes or bool(self.stack and self.stack[-1][1])
         blocked = tag in {'script', 'style', 'button', 'nav', 'svg'} or 'not-prose' in classes or bool(self.stack and self.stack[-1][2])
         if tag not in self.VOID:
@@ -136,12 +233,24 @@ category：2–12 字，使用有辨識度的主題標籤。
         request = Request(API_URL, data=json.dumps(payload).encode(),
                           headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api_key})
         try:
-            with urlopen(request, timeout=180) as response:
-                result = json.loads(response.read(1_000_000))
+            with api_open(request, timeout=180) as response:
+                if urlparse(response.url).netloc != 'api.deepseek.com':
+                    raise APIResponseError('Unexpected API redirect')
+                raw_response = response.read(MAX_API_BYTES + 1)
         except HTTPError as error:
             raise RuntimeError('DeepSeek returned HTTP ' + str(error.code)) from None
-        choice = result['choices'][0]
-        content = choice.get('message', {}).get('content')
+        if len(raw_response) > MAX_API_BYTES:
+            raise APIResponseError('Oversized API response')
+        try:
+            result = json.loads(raw_response)
+        except (ValueError, UnicodeError):
+            raise APIResponseError('Invalid API response JSON') from None
+        choices = result.get('choices') if isinstance(result, dict) else None
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            raise APIResponseError('Missing completion choices')
+        choice = choices[0]
+        message = choice.get('message')
+        content = message.get('content') if isinstance(message, dict) else None
         parsed = None
         try:
             if choice.get('finish_reason') != 'stop':
@@ -200,6 +309,8 @@ def validate_cards(result, articles, previous_questions):
         questions.add(question)
         if normalize(card['evidence']) not in normalize(source['body']):
             raise ValueError('Evidence not found in source')
+        if len(re.split(r'\n\s*\n', card['answer'].strip())) != 3:
+            raise ValueError('Expected three paragraphs')
         cards.append({'id': digest(source['url'] + question + card['answer']),
                       'category': card['category'].strip(), 'question': question,
                       'answer': card['answer'].strip(), 'evidence': card['evidence'].strip(),
@@ -210,12 +321,14 @@ def validate_cards(result, articles, previous_questions):
 
 def write_payload(target, payload):
     temporary = target.with_suffix('.tmp')
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n')
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     temporary.replace(target)
 
 
 def failure_reason(error):
     """Only expose known diagnostics, never raw response bodies or secrets."""
+    if isinstance(error, APIResponseError):
+        return 'DeepSeek 服務回應結構異常，已保留上一版；沒有以此啟動額外付費修訂。'
     if isinstance(error, json.JSONDecodeError):
         return '模型或 API 回傳的 JSON 不完整或無法解析。'
     if isinstance(error, TimeoutError):
@@ -240,6 +353,7 @@ def failure_reason(error):
         'Expected a declarative discovery headline': '模型仍輸出了帶問號的標題，未符合新知導讀格式。',
         'Duplicate question': '模型輸出重複標題，與本批或歷史卡片相同。',
         'Evidence not found in source': '模型提供的證據片段無法在對應文章正文中逐字找到。',
+        'Expected three paragraphs': '卡片導讀須以空行分成三段：進展、意義與限制。',
         'No recent publisher articles available': 'RSS 中沒有符合來源與日期條件的文章。',
         'Not enough readable articles for a new edition': '可讀文章不足五篇，或未成功讀取任何尚未使用的文章。',
         'Unexpected publisher redirect': '文章來源發生非預期轉址。',
@@ -275,9 +389,9 @@ def refresh(previous, now, api_key):
     history = previous.get('sourceHistory', []) if current_prompt else []
     unseen = [a for a in articles if a['url'] not in history]
     stamp = now.isoformat()
-    generated_at = previous.get('generatedAt')
+    generated_at = iso_date(previous.get('generatedAt'))
     if current_prompt and generated_at:
-        generated_day = datetime.fromisoformat(generated_at).astimezone(ZoneInfo('Asia/Hong_Kong')).date()
+        generated_day = generated_at.astimezone(ZoneInfo('Asia/Hong_Kong')).date()
         if generated_day == now.astimezone(ZoneInfo('Asia/Hong_Kong')).date():
             return {**previous, 'checkedAt': stamp, 'status': 'already-generated-today'}, False
     if not unseen and previous.get('mode') == 'llm':
@@ -302,7 +416,7 @@ def refresh(previous, now, api_key):
 
 def main():
     target = ROOT / 'data/cards.json'
-    previous = json.loads(target.read_text())
+    previous = load_previous(target)
     now = datetime.now(timezone.utc)
     try:
         payload, generated = refresh(previous, now, os.environ.get('LLM_API_KEY', '').strip())

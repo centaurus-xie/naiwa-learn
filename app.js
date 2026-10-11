@@ -1,4 +1,4 @@
-import { createSession, advance, dayKey } from './learning.js';
+import { createSession, advance, dayKey, validCards, feedStatus } from './learning.js';
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'naiwa-learning-v1';
@@ -100,31 +100,28 @@ async function start() {
   let saved;
   try { saved=JSON.parse(localStorage.getItem(KEY)); } catch { /* Invalid or unavailable storage is nonfatal. */ }
   let feed;
+  let timer;
+  const controller=new AbortController();
   try {
-    const response=await fetch('./data/cards.json',{cache:'no-cache'});
+    timer=setTimeout(()=>controller.abort(),15000);
+    const response=await fetch('./data/cards.json',{cache:'no-cache',signal:controller.signal});
     if(!response.ok) throw new Error('feed');
     feed=await response.json();
+    if(!feed || !validCards(feed.cards)) throw new Error('invalid-feed');
   } catch {
-    if(saved?.day===today && saved.cards?.length) feed={cards:saved.cards,editionId:saved.editionId,offline:true};
+    if(validCards(saved?.cards)) feed={cards:saved.cards,editionId:saved.editionId,offline:true};
     else {
       $('question').textContent='小卡暫時沒送到。';
       $('hint').textContent='檢查網路後，重新整理就可以再試一次。';
       $('reveal').hidden=true;
       return;
     }
+  } finally {
+    clearTimeout(timer);
   }
   try { state=createSession(feed.cards,today,saved,feed.editionId || null); }
   catch { $('question').textContent='小卡正在整理中。'; $('hint').textContent='請稍後重新整理。'; return; }
   save(); render();
-  const format=(value)=>new Intl.DateTimeFormat('zh-Hant',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(value));
-  let label=feed.generatedAt ? `新卡發布 ${format(feed.generatedAt)} · AI 整理，請參照原文`
-    : '基礎概念卡 · 尚未生成 AI 新卡';
-  if(feed.checkedAt) label+=` ｜ 檢查 ${format(feed.checkedAt)}`;
-  if(feed.status==='no-new-articles') label+=' · 暫無新文章';
-  if(feed.status==='already-generated-today') label+=' · 今日卡片已備妥';
-  if(feed.status==='update-failed') label+=' · 更新未成功，保留原卡';
-  if(feed.status==='content-retained') label+=' · 新內容仍在整理，沿用上一版';
-  if(feed.offline) label='目前離線，繼續本機保存的卡片';
-  $('feed-status').textContent=label;
+  $('feed-status').textContent=feedStatus(feed);
 }
 start();
