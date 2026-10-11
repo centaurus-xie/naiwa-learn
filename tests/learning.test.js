@@ -15,9 +15,15 @@ test('five remembered cards complete the session and survive reload',()=>{
   assert.deepEqual(createSession(cards,'2026-10-11',JSON.parse(JSON.stringify(s))),s);
   assert.equal(createSession(cards,'2026-10-12',s).queue.length,5);
 });
-test('midday feed changes cannot replace the current session',()=>{
-  const s=advance(createSession(cards,'2026-10-11'),true);
-  assert.deepEqual(createSession([{...cards[0],id:'new'}],'2026-10-11',s),s);
+test('a new edition replaces stale same-day cards',()=>{
+  const s=advance(createSession(cards,'2026-10-11',null,'old'),true);
+  const fresh=createSession([{...cards[0],id:'new'}],'2026-10-11',s,'new');
+  assert.deepEqual(fresh.queue,['new']);
+  assert.deepEqual(fresh.completed,[]);
+});
+test('checking the same edition preserves progress',()=>{
+  const s=advance(createSession(cards,'2026-10-11',null,'same'),true);
+  assert.deepEqual(createSession(cards,'2026-10-11',s,'same'),s);
 });
 test('corrupt storage resets safely',()=>{
   const s=createSession(cards,'2026-10-11');

@@ -2,7 +2,7 @@
 
 每天五張 AI 小卡，和學習夥伴奶蛙一起學習。點開答案，選「再看看」或「記住了」，完成後明天再見。
 
-純 HTML / CSS / JavaScript，無建置步驟、無第三方 JavaScript 套件、無 API 金鑰。Python 只用於 GitHub Actions 每日更新資料；網站本身完全靜態。
+純 HTML / CSS / JavaScript，無建置步驟、無第三方 JavaScript 套件。網站完全靜態；Python 在 GitHub Actions 中呼叫 DeepSeek 生成卡片，API 金鑰不會傳到瀏覽器。
 
 ## 本機預覽
 
@@ -13,24 +13,38 @@
 1. 建立 GitHub repository，預設分支使用 `main`。
 2. 將本資料夾內容放在 repository 根目錄，包含 `.github/workflows/pages.yml` 和 `assets/guide.png`。
 3. 在 repository 的 **Settings → Pages → Build and deployment → Source** 選 **GitHub Actions**。
-4. 在 **Actions → Update cards and deploy Pages → Run workflow** 執行一次。
+4. 按下方步驟設定 DeepSeek 金鑰，再在 **Actions → Update cards and deploy Pages → Run workflow** 執行一次。
 5. 部署完成後，網址為 `https://你的帳號.github.io/儲存庫名稱/`；若 repository 名稱為 `你的帳號.github.io`，網址就是該根網域。
 
-日後推送到 main 會自動部署。全部資源使用相對路徑，支援專案子目錄。workflow 只發佈網站檔案，不會公開測試或更新腳本。
+日後推送到 main 會自動部署。全部資源使用相對路徑，支援專案子目錄。Pages 發佈包只含網站檔案；公開倉庫中的腳本仍可被閱讀，因此絕不可把金鑰寫入任何檔案。
+
+## 設定 DeepSeek（只需一次）
+
+1. 打開 https://github.com/centaurus-xie/naiwa-learn/settings/secrets/actions 。
+2. 點 **New repository secret**，Name 填 `LLM_API_KEY`，Secret 貼上 DeepSeek API Key，按 **Add secret**。
+3. 確認 DeepSeek API 帳戶有可用餘額；API 使用費計入該帳戶。
+4. 推送新版程式後，在 Actions 執行 **Run workflow**。
+5. 查看 **Generate DeepSeek cards** 步驟是否成功，並重新整理網站：底部應顯示「新卡發布」及時間。
+
+官方 endpoint 固定為 `https://api.deepseek.com/chat/completions`。API 的 `model` 是必填值；本程式預設 `deepseek-flash`，使用 JSON Output、非思考模式，無需你另外選模型。官方文件：https://api-docs.deepseek.com/api/create-chat-completion/ 。
+
+只有生成步驟會取得 Secret。每次最多一次模型請求、五篇正文各最多 12,000 字元、輸出最多 4,000 tokens；沒有自動付費重試。同一香港日期已有成功版本時不再次生成，沒有未使用文章時也不呼叫模型。此去重依賴 GitHub 快取，快取失效時可能重新生成。
 
 ## 每日更新如何運作
 
 - 香港時間約 08:17 由 GitHub Actions 抓取 Hugging Face 公開 RSS。
 - 篩選最近 45 天、主站及腳本允許的組織文章。社群文章不代表平台背書；卡片顯示實際發布者。
-- 原文英文標題連結到對應的中文概念卡。概念解釋是人工撰寫的基礎知識，**不是對文章的自動翻譯或 AI 摘要**；不推斷文章未提供的內容。
-- 選最多五種不同概念；不足時補基礎卡。沒有新文章時，內容可能重複，不會憑空生成新聞。可在 `data/concepts.json` 擴充概念與關鍵字。
-- 抓取失敗會保留快取版本；快取不存在時使用倉庫隨附卡片。畫面顯示最後成功抓取日期。
-- 新資料部署到 Pages，不自動提交至 Git。可在本機執行 `npm run update` 更新 JSON。
+- 優先挑選尚未使用的近期文章並抓取正文；不足五篇時搭配已用文章，避開最近 100 道完全相同的問題。沒有未用文章時保留原卡，不宣稱有新內容。
+- DeepSeek 根据正文生成五張繁體中文問答，每張對應一篇文章。檢查字數、中文、重複問題、來源索引及原文證據片段，通過後才替換整批卡片。
+- 原文證據匹配只是機械驗證，不保證答案完全正確；介面標示 AI 整理並保留原文連結。完整文章正文不公開到資料檔。
+- 抓取或生成失敗會保留快取版本；快取不存在時使用倉庫隨附的舊概念卡。先部署可用卡片與失敗狀態，再將 workflow 標為失敗，方便在 Actions 發現問題。
+- 畫面分別顯示「新卡發布」及「檢查」時間；缺少金鑰或首次生成未成功時會顯示尚未生成 AI 新卡。
+- 新資料部署到 Pages，不自動提交至 Git。本機 `npm run update` 需要環境變數 `LLM_API_KEY`，不要將金鑰直接貼入會保存歷史的終端機指令。
 - 排程可能延遲，公開倉庫連續 60 天沒有活動時 GitHub 可能停用排程；可在 Actions 重新啟用並手動執行。
 
 ## 學習進度
 
-進度存於目前瀏覽器的 localStorage。每日以使用者裝置日期重置；同一天已開始的五張卡固定，更新網站也不會打斷學習。「再看看」將該卡放到隊尾，直到選擇「記住了」才算完成。清除瀏覽資料會重置進度，不跨裝置同步。
+進度存於目前瀏覽器的 localStorage。每日以使用者裝置日期重置；重新開啟或重新整理時，如果線上已有新的 `editionId`，會載入新卡片並重置這批進度。同一版本重載則保留進度，僅更新檢查時間不會重置。已開啟的頁面不自動中斷學習，需重新整理才能取得新版本。「再看看」將該卡放到隊尾，直到選擇「記住了」才算完成。清除瀏覽資料會重置進度，不跨裝置同步。
 
 ## 驗證
 

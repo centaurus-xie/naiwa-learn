@@ -18,6 +18,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -39,9 +40,11 @@ jobs:
           path: data/cards.json
           key: cards-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: cards-
-      - name: Update news (retain previous cards on failure)
+      - name: Generate DeepSeek cards (retain previous edition on failure)
         id: refresh
         continue-on-error: true
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         run: python3 scripts/update_cards.py
       - name: Report stale feed
         if: steps.refresh.outcome == 'failure'
@@ -64,3 +67,8 @@ jobs:
       - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Mark failed generation after publishing fallback
+        if: steps.refresh.outcome == 'failure'
+        run: |
+          echo '::error::Card generation failed. Previous cards remain online. Check LLM_API_KEY, DeepSeek balance and refresh logs.'
+          exit 1

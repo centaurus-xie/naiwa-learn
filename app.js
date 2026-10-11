@@ -4,7 +4,8 @@ const $ = (id) => document.getElementById(id);
 const KEY = 'naiwa-learning-v1';
 let state;
 let revealed = false;
-const today = dayKey();
+let today = dayKey();
+const cardTemplate = $('card').innerHTML;
 const date = new Intl.DateTimeFormat('zh-Hant', {month:'long', day:'numeric', weekday:'short'}).format(new Date());
 $('date-label').textContent = `${date} · DAILY DISCOVERY`;
 
@@ -30,7 +31,12 @@ function render() {
   denominator.textContent = `/ ${String(state.total).padStart(2,'0')}`;
   $('counter').append(denominator);
   $('actions').hidden = true;
-  $('card').classList.remove('is-revealed', 'entering');
+  if (!$('question')) {
+    $('card').innerHTML = cardTemplate;
+    $('reveal').addEventListener('click', revealCard);
+  }
+  $('session-label').textContent='今天的小發現';
+  $('card').classList.remove('is-revealed', 'entering', 'complete');
   void $('card').offsetWidth;
   $('card').classList.add('entering');
   if (!state.queue.length) {
@@ -90,6 +96,7 @@ $('again').addEventListener('click',()=>respond(false));
 $('remember').addEventListener('click',()=>respond(true));
 
 async function start() {
+  today = dayKey();
   let saved;
   try { saved=JSON.parse(localStorage.getItem(KEY)); } catch { /* Invalid or unavailable storage is nonfatal. */ }
   let feed;
@@ -98,7 +105,7 @@ async function start() {
     if(!response.ok) throw new Error('feed');
     feed=await response.json();
   } catch {
-    if(saved?.day===today && saved.cards?.length) feed={cards:saved.cards};
+    if(saved?.day===today && saved.cards?.length) feed={cards:saved.cards,editionId:saved.editionId,offline:true};
     else {
       $('question').textContent='小卡暫時沒送到。';
       $('hint').textContent='檢查網路後，重新整理就可以再試一次。';
@@ -106,11 +113,17 @@ async function start() {
       return;
     }
   }
-  try { state=createSession(feed.cards,today,saved); }
+  try { state=createSession(feed.cards,today,saved,feed.editionId || null); }
   catch { $('question').textContent='小卡正在整理中。'; $('hint').textContent='請稍後重新整理。'; return; }
   save(); render();
-  $('feed-status').textContent=feed.fetchedAt
-    ? `資訊更新 ${new Intl.DateTimeFormat('zh-Hant',{month:'numeric',day:'numeric'}).format(new Date(feed.fetchedAt))} · 新聞搭配概念卡`
-    : 'AI 基礎卡 · 每天一點練習';
+  const format=(value)=>new Intl.DateTimeFormat('zh-Hant',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(value));
+  let label=feed.generatedAt ? `新卡發布 ${format(feed.generatedAt)} · AI 整理，請參照原文`
+    : '基礎概念卡 · 尚未生成 AI 新卡';
+  if(feed.checkedAt) label+=` ｜ 檢查 ${format(feed.checkedAt)}`;
+  if(feed.status==='no-new-articles') label+=' · 暫無新文章';
+  if(feed.status==='already-generated-today') label+=' · 今日卡片已備妥';
+  if(feed.status==='update-failed') label+=' · 更新未成功，保留原卡';
+  if(feed.offline) label='目前離線，繼續本機保存的卡片';
+  $('feed-status').textContent=label;
 }
 start();
