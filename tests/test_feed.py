@@ -68,9 +68,9 @@ class FeedTests(unittest.TestCase):
     def fixture(self):
         urls=['https://news.mit.edu/2026/test-0-1010','https://research.google/blog/test-1/',
               'https://www.microsoft.com/en-us/research/blog/test-2/','https://huggingface.co/blog/test-3',
-              'https://research.google/blog/test-4/']
-        names=['MIT News','Google Research','Microsoft Research','Hugging Face','Google Research']
-        actors=['MIT','Google','Microsoft','Hugging Face','Google']
+              'https://hkust.edu.hk/news/test-4']
+        names=['MIT News','Google Research','Microsoft Research','Hugging Face','香港科技大學（HKUST）']
+        actors=['MIT','Google','Microsoft','Hugging Face','HKUST']
         titles=['AI for medical diagnosis','AI for protein prediction','AI architecture improves efficiency','AI engineering tools','AI image generation']
         sources = [{'url':urls[i], 'sourceName':names[i], 'platform':names[i],
                     'publishedAt':'2026-10-10T00:00:00+00:00', 'title':titles[i],
@@ -99,6 +99,7 @@ class FeedTests(unittest.TestCase):
 
     def test_each_platform_only_accepts_its_own_article_paths(self):
         sources, _=self.fixture()
+        sources.append({'title':'人工智能醫療工具','url':'https://www.qbitai.com/2026/10/502544.html'})
         now=datetime(2026,10,12,tzinfo=timezone.utc)
         xml=self.rss(sources).decode().replace('</channel>',
             '<item><title>AI medical news</title><link>https://evil.example/2026/news</link><pubDate>Sat, 10 Oct 2026 00:00:00 GMT</pubDate></item></channel>')
@@ -140,7 +141,7 @@ class FeedTests(unittest.TestCase):
             return self.rss(sources)
         with patch.object(updater,'get_public',side_effect=fetch):
             articles=updater.collect_articles(datetime(2026,10,12,tzinfo=timezone.utc))
-        self.assertEqual({a['platform'] for a in articles},{'MIT News','Google Research','Microsoft Research'})
+        self.assertEqual({a['platform'] for a in articles},{'MIT News','Google Research','Microsoft Research','香港科技大學（HKUST）'})
         self.assertEqual(len(articles),4)
 
     def test_public_fetch_rejects_unknown_urls_and_cross_host_redirects(self):
@@ -159,11 +160,49 @@ class FeedTests(unittest.TestCase):
         with patch.object(updater,'article_body',return_value='supported body'):
             selected=updater.select_sources(prolific+sources,[])
         platforms=[s['platform'] for s in selected]
-        self.assertGreaterEqual(len(set(platforms)),3)
-        self.assertTrue(all(platforms.count(p)<=2 for p in platforms))
+        self.assertEqual(len(set(platforms)),5)
+        self.assertTrue(all(platforms.count(p)==1 for p in platforms))
         tags=[updater.article_tags(s) for s in selected]
         self.assertGreaterEqual(len({domain for domain,_ in tags if domain}),2)
         self.assertLessEqual(sum(benchmark for _,benchmark in tags),1)
+
+    def test_one_article_per_platform_is_a_hard_rule(self):
+        sources, raw=self.fixture()
+        sources[-1]['platform']=sources[0]['platform']
+        self.assertIsNone(updater.choose_edition(sources,[]))
+        with patch.object(updater,'article_body') as request,self.assertRaises(updater.ContentRejected):
+            updater.select_sources(sources,[])
+        request.assert_not_called()
+        with self.assertRaisesRegex(ValueError,'Repeated publisher platform'):
+            updater.validate_cards(raw,sources,[])
+
+    def test_chinese_topics_and_media_labels_are_preserved(self):
+        cases=[('人工智能助力医疗诊断','醫療健康'),('大模型预测电网天气风险','環境能源'),
+               ('物理AI加速机器人落地','機器人交通'),('DeepSeek助手新增办公插件','工作與工具')]
+        for title,domain in cases:
+            with self.subTest(title=title):
+                xml=self.rss([{'title':title,'url':'https://www.qbitai.com/2026/10/502544.html'}])
+                articles=updater.parse_feed(xml,datetime(2026,10,12,tzinfo=timezone.utc),'qbitai')
+                self.assertEqual(len(articles),1)
+                self.assertEqual(updater.article_tags(articles[0])[0],domain)
+                self.assertIn('媒體報導',articles[0]['sourceName'])
+                self.assertEqual(articles[0]['region'],'中國內地')
+
+    def test_hkust_feed_uses_verified_current_article_host(self):
+        xml=self.rss([{'title':'AI tools for medical diagnosis','url':'https://news.hkust.edu.hk/news/new-ai-tool'},
+                      {'title':'AI external story','url':'https://evil.example/news/ai-tool'}])
+        articles=updater.parse_feed(xml,datetime(2026,10,12,tzinfo=timezone.utc),'hkust')
+        self.assertEqual([a['url'] for a in articles],['https://hkust.edu.hk/news/new-ai-tool'])
+        self.assertEqual(articles[0]['region'],'香港')
+
+    def test_regional_candidates_are_preferred_without_relaxing_topic_rules(self):
+        sources, _=self.fixture()
+        regional={**sources[3],'platform':'量子位','region':'中國內地',
+                  'url':'https://www.qbitai.com/2026/10/502544.html'}
+        selected=updater.choose_edition(sources+[regional],[])
+        self.assertIn(regional['url'],[s['url'] for s in selected])
+        self.assertEqual(len({s['platform'] for s in selected}),5)
+        self.assertGreaterEqual(len({updater.article_tags(s)[0] for s in selected if updater.article_tags(s)[0]}),2)
 
     def test_failed_body_is_replaced_without_rereading_successful_bodies(self):
         sources, _=self.fixture()
@@ -332,7 +371,7 @@ class FeedTests(unittest.TestCase):
     def test_pipeline_repair_publish_skip_then_network_rollback(self):
         from urllib.error import URLError
         sources, valid = self.fixture()
-        body='<div class="blog-content news-article--content--body rich-text single-post__content"><p>'+''.join(s['body'] for s in sources)*8+'</p></div>'
+        body='<div class="blog-content news-article--content--body rich-text single-post__content news__body"><p>'+''.join(s['body'] for s in sources)*8+'</p></div>'
         feed='<rss><channel>'+''.join(
             '<item><title>'+s['title']+'</title><link>'+s['url']+'</link><pubDate>Sat, 10 Oct 2026 00:00:00 GMT</pubDate></item>' for s in sources)+'</channel></rss>'
         invalid=json.loads(json.dumps(valid))

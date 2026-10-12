@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FEED = 'https://huggingface.co/blog/feed.xml'
 API_URL = 'https://api.deepseek.com/chat/completions'
 MODEL = 'deepseek-flash'
-PROMPT_VERSION = 'discovery-brief-v3'
+PROMPT_VERSION = 'discovery-brief-v4'
 MAX_GENERATION_ATTEMPTS = 3
 PUBLISHED_FEED = 'https://centaurus-xie.github.io/naiwa-learn/data/cards.json'
 MAX_API_BYTES = 1_000_000
@@ -57,18 +57,24 @@ SOURCES = {
     'microsoft': {'feed': 'https://www.microsoft.com/en-us/research/feed/',
                   'host': 'www.microsoft.com', 'name': 'Microsoft Research',
                   'path': r'/en-us/research/blog/[^/]+/?', 'classes': {'single-post__content'}},
+    'hkust': {'feed': 'https://news.hkust.edu.hk/rss.xml', 'host': 'hkust.edu.hk',
+               'article_alias': 'news.hkust.edu.hk', 'name': '香港科技大學（HKUST）',
+               'region': '香港', 'path': r'/news/[^/]+/?', 'classes': {'news__body'}},
+    'qbitai': {'feed': 'https://www.qbitai.com/feed', 'host': 'www.qbitai.com',
+                'name': '量子位', 'kind': 'media', 'region': '中國內地',
+                'path': r'/\d{4}/\d{2}/\d+\.html', 'classes': {'article'}},
 }
-AI_TOPIC = re.compile(r'\b(ai|artificial intelligence|machine learning|deep learning|neural|llms?|language models?|generative|robot\w*|reinforcement learning|computer vision)\b', re.I)
+AI_TOPIC = re.compile(r'\b(ai|artificial intelligence|machine learning|deep learning|neural|llms?|language models?|generative|robot\w*|reinforcement learning|computer vision)\b|(?<![a-z0-9])(?:AI|DeepSeek|Qwen|TRAE|FSD|Nano Banana)(?![a-z0-9])|人工智能|人工智慧|大模型|机器学习|機器學習|深度学习|深度學習|神经网络|神經網絡|机器人|機器人|智能体|智能體|生成式|具身智能', re.I)
 INSTITUTIONAL_NEWS = re.compile(r'\b(initiative|partnership|named|appointed|anniversary|fellowships?|scholarships?|obituar\w*)\b', re.I)
 BENCHMARK = re.compile(r'\b(benchmark\w*|leaderboard\w*|evaluat\w*|evals?|scores?|rankings?|arena|mmlu|gpqa)\b|評測|评测|跑分|打分|排行榜|基準成績|基准成绩', re.I)
 APPLICATIONS = [
-    ('醫療健康', r'\b(health\w*|medical|clinic\w*|patient\w*|diagnos\w*|cancer|pathology|genomic\w*)\b'),
-    ('科學探索', r'\b(biology|protein\w*|molecul\w*|chemistry|material\w*|physics|astronom\w*|connectomic\w*)\b'),
-    ('教育學習', r'\b(educat\w*|teach\w*|student\w*|classroom\w*|tutor\w*)\b'),
-    ('環境能源', r'\b(climate|environment\w*|energy|sustainab\w*|weather|power grids?|emissions?|earth ai)\b'),
-    ('機器人交通', r'\b(robot\w*|transport\w*|transit|traffic|logistics|driving|navigation)\b'),
-    ('創意設計', r'\b(video|music|image generation|3d|design\w*|creativ\w*|fabricat\w*)\b'),
-    ('工作與工具', r'\b(workers?|workplace|workflow\w*|coding|software engineering|accessib\w*)\b'),
+    ('醫療健康', r'\b(health\w*|medical|clinic\w*|patient\w*|diagnos\w*|cancer|pathology|genomic\w*)\b|醫療|医疗|健康|診斷|诊断|臨床|临床|病理|藥物|药物|癌症'),
+    ('科學探索', r'\b(biology|protein\w*|molecul\w*|chemistry|material\w*|physics|astronom\w*|connectomic\w*)\b|科学|科學|科研|蛋白|分子|材料|數學|数学'),
+    ('教育學習', r'\b(educat\w*|teach\w*|student\w*|classroom\w*|tutor\w*)\b|教育|教學|教学|老師|教师|學生|学生|輔導|辅导'),
+    ('環境能源', r'\b(climate|environment\w*|energy|sustainab\w*|weather|power grids?|emissions?|earth ai)\b|氣候|气候|環境|环境|能源|電網|电网|天氣|天气|減碳|减碳|預警|预警'),
+    ('機器人交通', r'\b(robot\w*|transport\w*|transit|traffic|logistics|driving|navigation)\b|機器人|机器人|具身|物理\s*AI|自動駕駛|自动驾驶|交通|物流|導航|导航'),
+    ('創意設計', r'\b(video|music|image generation|3d|design\w*|creativ\w*|fabricat\w*)\b|影像|影片|视频|視頻|圖像|图像|音樂|音乐|設計|设计|創作|创作|影視|影视'),
+    ('工作與工具', r'\b(workers?|workplace|workflow\w*|coding|software engineering|accessib\w*)\b|程式|代码|代碼|編程|编程|工作流|辦公|办公|工具|插件|助手|無障礙|无障碍'),
 ]
 
 
@@ -193,6 +199,14 @@ def parse_feed(xml, now, source_key='huggingface'):
         if not link:
             link = next((node.get('href', '') for node in item.findall(atom + 'link')
                          if node.get('rel', 'alternate') == 'alternate'), '')
+        # HKUST's official RSS still links its retired news subdomain. Only
+        # rewrite that explicitly verified alias, never arbitrary feed hosts.
+        try:
+            original = urlparse(link)
+            if original.scheme == 'https' and original.netloc == source.get('article_alias'):
+                link = original._replace(netloc=source['host']).geturl()
+        except ValueError:
+            continue
         if not allowed_article(link, source):
             continue
         url = urlparse(link)
@@ -219,8 +233,11 @@ def parse_feed(xml, now, source_key='huggingface'):
         parts = url.path.strip('/').split('/')
         if source_key == 'huggingface' and len(parts) == 3:
             name = parts[1] + ' · Hugging Face'
+        if source.get('kind') == 'media':
+            name += ' · 媒體報導'
         articles.append({'title': title, 'url': link, 'publishedAt': published.isoformat(),
-                         'sourceName': name, 'platform': source['name'], 'summary': summary})
+                         'sourceName': name, 'platform': source['name'], 'summary': summary,
+                         'region': source.get('region')})
     return sorted(articles, key=lambda a: a['publishedAt'], reverse=True)
 
 
@@ -240,18 +257,18 @@ def collect_articles(now):
 
 
 def choose_edition(articles, history):
-    """One platform <= 2, benchmark <= 1, two application domains minimum."""
+    """Five different platforms, benchmark <= 1, two application domains."""
     best, best_score = None, None
     for candidate in combinations(articles, 5):
         platforms = [a.get('platform', urlparse(a['url']).netloc) for a in candidate]
-        if any(platforms.count(platform) > 2 for platform in set(platforms)):
+        if len(set(platforms)) != 5:
             continue
         tags = [article_tags(article) for article in candidate]
         domains = {domain for domain, _ in tags if domain}
         benchmarks = sum(benchmark for _, benchmark in tags)
         if len(domains) < 2 or benchmarks > 1 or not any(a['url'] not in history for a in candidate):
             continue
-        score = (sum(a['url'] not in history for a in candidate), min(len(domains), 3),
+        score = (sum(a['url'] not in history for a in candidate), min(sum(bool(a.get('region')) for a in candidate), 2), min(len(domains), 3),
                  min(sum(bool(domain) for domain, _ in tags), 3), len(set(platforms)), -benchmarks,
                  sum(iso_date(a['publishedAt']).timestamp() for a in candidate))
         if best_score is None or score > best_score:
@@ -328,7 +345,7 @@ def get_public(url):
     if source is None:
         raise ValueError('Unexpected publisher URL')
     with urlopen(Request(url, headers={'User-Agent': 'Naiwa-Learning/2.0'}), timeout=30) as response:
-        if urlparse(response.url).scheme != 'https' or urlparse(response.url).netloc != source['host']:
+        if urlparse(response.url).scheme != 'https' or urlparse(response.url).netloc != urlparse(url).netloc:
             raise ValueError('Unexpected publisher redirect')
         body = response.read(3_000_001)
     if len(body) > 3_000_000:
@@ -353,6 +370,7 @@ def generate(articles, previous_questions, api_key):
 根據提供的文章正文，製作恰好五張繁體中文卡片，每張使用不同文章（sourceIndex 為 0 到 4，恰好各用一次）。
 每張選一個具體的新技術、新發現、新應用或工程實踐。用讀者能理解的語言，保留真正有辨識度的細節；必要術語用一句話解釋。不要出考題、要求回憶名詞、列背誦重點或使用「請問／下列何者／正確答案」等語氣。
 這一批已按平台與應用領域混合選題。重點是 AI 如何被用在具體領域、改變哪些工作方式與取捨；至少兩張介紹不同領域的應用，至多一張以模型評測或排名為主題。不要把多篇應用文章改寫成模型打分、排行榜或基準成績的摘要。成績只可作為理解應用的輔助證據，保留測試條件，不將實驗原型寫成已廣泛部署。
+五篇文章來自五個不同平台，不可將同平台的不同欄目或組織帳號當成不同來源。來源標有「媒體報導」時，將未獨立驗證的結果明確寫為報導或受訪團隊的說法，不偽裝成官方發布或已查證事實。region 只表示來源地區，不代表事件或應用發生地，不能據此猜測地點。
 每張都必須能獨立讀懂「誰做了什麼」。actor 欄位填正文、文章標題或 sourceName 中逐字出現的具名機構、團隊、人物或專案名稱（2–80 字元，保留原文名稱），並在 answer 第一段明確提到這個名稱及其角色。不要只說「作者／研究者／他們」；不確定研發者時可寫「MIT News 報導…」等具名來源歸屬，並說明正文未交代研發團隊，不能把發布平台當成研發者或編造姓名。
 「老師／學生」若指知識蒸餾，必須寫成「教師模型（提供示範輸出的大模型）／學生模型（接受訓練的小模型）」並在本卡首次出現時解釋，不能讓讀者誤以為真人。若確實是教育應用中的師生，說明他們是使用者或研究參與者及應用情境；未提供的學校或個人姓名不能捏造。
 為相容既有資料，欄位仍叫 question 和 answer，但內容必須是「新聞式標題」與「編輯導讀」，不是問題和答案：
@@ -426,6 +444,8 @@ category：2–12 字，使用有辨識度的主題標籤。
 
 
 def validate_cards(result, articles, previous_questions):
+    if len({a.get('platform', urlparse(a['url']).netloc) for a in articles}) != 5:
+        raise ValueError('Repeated publisher platform')
     raw = result.get('cards') if isinstance(result, dict) else None
     if not isinstance(raw, list) or len(raw) != 5:
         raise ValueError('Expected exactly five cards')
@@ -510,6 +530,7 @@ def failure_reason(error):
         'Expected three paragraphs': '卡片導讀須以空行分成三段：進展、意義與限制。',
         'Unclear attribution': '卡片須指明有來源支持的具名主體，並在第一段交代其角色；不能只說作者或研究者。',
         'Too many benchmark headlines': '五張卡至多一張以模型評測或排名為主題；其他卡須保留具體新進展與應用。',
+        'Repeated publisher platform': '五張卡必須來自五個不同平台，每個平台最多一篇。',
         'Invalid card field: actor': '卡片主體須是 2–80 字元、來源中出現的具名機構、人物或專案。',
         'No publisher feeds available': '所有資訊來源暫時無法讀取，已保留原卡。',
         'No recent publisher articles available': 'RSS 中沒有符合來源與日期條件的文章。',
