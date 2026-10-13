@@ -6,7 +6,7 @@ let state;
 let revealed = false;
 let today = dayKey();
 const cardTemplate = $('card').innerHTML;
-const date = new Intl.DateTimeFormat('zh-Hant', {month:'long', day:'numeric', weekday:'short'}).format(new Date());
+const date = new Intl.DateTimeFormat('zh-Hant', {timeZone:'Asia/Hong_Kong',month:'long', day:'numeric', weekday:'short'}).format(new Date());
 $('date-label').textContent = `${date} · DAILY DISCOVERY`;
 
 function save() {

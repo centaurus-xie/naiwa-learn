@@ -22,6 +22,9 @@ class FeedTests(unittest.TestCase):
         capture = contextlib.redirect_stderr(io.StringIO())
         capture.__enter__()
         self.addCleanup(capture.__exit__, None, None, None)
+        output_capture = contextlib.redirect_stdout(io.StringIO())
+        output_capture.__enter__()
+        self.addCleanup(output_capture.__exit__, None, None, None)
 
     def test_mock_missing_key_does_not_pollute_real_actions_summary(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -48,7 +51,7 @@ class FeedTests(unittest.TestCase):
                 updater.report_failure(updater.failure_reason(ValueError('Evidence not found in source')))
             self.assertTrue(output.read_text().startswith('failure_reason='))
             self.assertIn('逐字',output.read_text())
-            self.assertIn('上一批卡片已保留',summary.read_text())
+            self.assertIn('這不代表今日更新成功',summary.read_text())
 
     def test_untrusted_future_and_duplicate_items(self):
         def item(url, date='Sat, 10 Oct 2026 00:00:00 GMT'):
@@ -93,6 +96,146 @@ class FeedTests(unittest.TestCase):
         response.url=updater.API_URL
         response.read.return_value=body
         return response
+
+    def completion(self, draft):
+        return self.api_response(json.dumps({'choices':[{'finish_reason':'stop','message':{'content':json.dumps(draft)}}]}).encode())
+
+    def structured_fixture(self):
+        sources, raw=self.fixture()
+        for card in raw['cards']:
+            card['paragraphs']=card.pop('answer').split('\n\n')
+            card.pop('evidence')
+            card['evidenceIndex']=0
+        return sources, raw
+
+    def test_structured_drafts_compile_three_paragraphs_and_literal_evidence(self):
+        sources, raw=self.structured_fixture()
+        raw['cards'][0]['paragraphs'][1]=' \n '+raw['cards'][0]['paragraphs'][1]+'\n\n '
+        with patch.object(updater,'api_open',return_value=self.completion(raw)):
+            cards=updater.generate(sources,[],'test-key')
+        for index, card in enumerate(cards):
+            self.assertEqual(len(card['answer'].split('\n\n')),3)
+            self.assertEqual(card['evidence'],updater.evidence_options(sources[index]['body'])[0])
+            self.assertIn(card['evidence'],sources[index]['body'])
+            self.assertNotIn('paragraphs',card)
+            self.assertNotIn('evidenceIndex',card)
+
+    def test_only_failed_card_is_requested_again_and_valid_cards_stay_unchanged(self):
+        sources, valid=self.fixture()
+        invalid=json.loads(json.dumps(valid))
+        invalid['cards'][0]['answer']='導讀過長'*150
+        replies=[self.completion(invalid),self.completion({'cards':[valid['cards'][0]]})]
+        with patch.object(updater,'api_open',side_effect=replies) as call:
+            cards=updater.generate(sources,[],'test-key')
+        repair=json.loads(call.call_args.args[0].data)
+        context=json.loads(repair['messages'][-1]['content'])
+        self.assertEqual(context['targetSourceIndexes'],[0])
+        self.assertEqual(len(context['articles']),1)
+        self.assertEqual(context['acceptedCardCount'],4)
+        self.assertEqual(repair['max_tokens'],1200)
+        self.assertEqual(cards[1:],updater.validate_cards(valid,sources,[])[1:])
+        self.assertEqual(call.call_count,2)
+
+    def test_all_failed_cards_receive_precise_feedback_in_one_pass(self):
+        sources, valid=self.fixture()
+        invalid=json.loads(json.dumps(valid))
+        invalid['cards'][0]['answer']='過長的導讀'*100
+        invalid['cards'][1]['actor']='不存在的機構'
+        replies=[self.completion(invalid),self.completion({'cards':valid['cards'][:2]})]
+        with patch.object(updater,'api_open',side_effect=replies) as call:
+            cards=updater.generate(sources,[],'test-key')
+        context=json.loads(json.loads(call.call_args.args[0].data)['messages'][-1]['content'])
+        self.assertEqual(context['targetSourceIndexes'],[0,1])
+        self.assertEqual(len(context['validationFeedback']),2)
+        self.assertEqual(context['validationFeedback'][0]['lengths']['answer'],500)
+        self.assertIn('具名',context['validationFeedback'][1]['reason'])
+        self.assertEqual(len(cards),5)
+
+    def test_sixth_attempt_can_complete_a_batch_without_regenerating_good_cards(self):
+        sources, valid=self.fixture()
+        invalid=json.loads(json.dumps(valid));invalid['cards'][0]['answer']='過長的導讀'*100
+        replies=[self.completion(invalid) for _ in range(5)]+[self.completion({'cards':[valid['cards'][0]]})]
+        with patch.object(updater,'api_open',side_effect=replies) as call:
+            cards=updater.generate(sources,[],'test-key')
+        self.assertEqual(call.call_count,6)
+        self.assertEqual(len(cards),5)
+        self.assertEqual(cards[1:],updater.validate_cards(valid,sources,[])[1:])
+        cold=json.loads(json.loads(call.call_args_list[3].args[0].data)['messages'][-1]['content'])
+        self.assertEqual(cold['previousDrafts'],[])
+        self.assertEqual(cold['targetSourceIndexes'],[0])
+
+    def test_grounding_failures_can_switch_articles_but_not_valid_cards(self):
+        sources, valid=self.fixture()
+        invalid=json.loads(json.dumps(valid));invalid['cards'][0]['evidence']='A fabricated quotation not in the source'
+        alternative={**sources[0],'url':sources[0]['url']+'-alternative'}
+        replies=[self.completion(invalid) for _ in range(3)]+[self.completion({'cards':[valid['cards'][0]]})]
+        with patch.object(updater,'api_open',side_effect=replies),patch.object(updater,'article_body',return_value=sources[0]['body']) as read:
+            cards=updater.generate(sources,[],'test-key',alternatives=[alternative])
+        self.assertEqual(cards[0]['sourceUrl'],alternative['url'])
+        self.assertEqual(cards[1:],updater.validate_cards(valid,sources,[])[1:])
+        self.assertNotEqual(sources[0]['url'],alternative['url'])
+        read.assert_called_once_with(alternative['url'])
+
+    def test_evidence_options_stay_literal_and_bounded_for_long_chinese_and_english(self):
+        for body in [('原文證據與適用限制。'*1200)+'結束',('The research team reports a grounded mechanism. '*400)+'End.']:
+            options=updater.evidence_options(body)
+            self.assertTrue(options)
+            self.assertLessEqual(len(options),24)
+            self.assertTrue(all(10<=len(e)<=180 and updater.normalize(e) in updater.normalize(body) for e in options))
+
+    def test_invalid_evidence_indices_and_wrong_paragraph_counts_do_not_bypass_validation(self):
+        for kind in ['index','paragraphs']:
+            sources, raw=self.structured_fixture()
+            if kind=='index': raw['cards'][0]['evidenceIndex']=999
+            else: raw['cards'][0]['paragraphs']=raw['cards'][0]['paragraphs'][:2]
+            with self.subTest(kind=kind),self.assertRaises(ValueError):
+                updater.validate_cards(raw,sources,[])
+
+    def test_harmless_numeric_strings_are_normalized_but_wrong_indices_are_rejected(self):
+        sources, raw=self.structured_fixture()
+        for card in raw['cards']:
+            card['sourceIndex']=str(card['sourceIndex']);card['evidenceIndex']='0'
+        with patch.object(updater,'api_open',return_value=self.completion(raw)):
+            self.assertEqual(len(updater.generate(sources,[],'test-key')),5)
+        raw['cards'][0]['evidenceIndex']=True
+        with self.assertRaisesRegex(ValueError,'evidence selection'):updater.validate_cards(raw,sources,[])
+
+    def test_success_dates_record_completion_not_start_of_generation(self):
+        sources, raw=self.fixture();cards=updater.validate_cards(raw,sources,[])
+        class CompletedClock(datetime):
+            @classmethod
+            def now(cls,tz=None):return datetime(2026,10,14,1,10,tzinfo=timezone.utc)
+        with patch.object(updater,'datetime',CompletedClock),patch.object(updater,'collect_articles',return_value=sources),patch.object(updater,'select_sources',return_value=sources),patch.object(updater,'generate',return_value=cards):
+            payload,_=updater.refresh({'cards':[]},datetime(2026,10,14,1,tzinfo=timezone.utc),'test-key')
+        self.assertEqual(payload['generatedAt'],'2026-10-14T01:10:00+00:00')
+
+    def test_kept_benchmark_and_headline_rules_also_apply_across_partial_revisions(self):
+        sources, valid=self.fixture()
+        invalid=json.loads(json.dumps(valid))
+        for index in range(2):invalid['cards'][index]['question']=f'第{index}個模型在新基準評測中的排名進展'
+        with patch.object(updater,'api_open',side_effect=[self.completion(invalid),self.completion({'cards':[valid['cards'][1]]})]) as call:
+            cards=updater.generate(sources,[],'test-key')
+        self.assertEqual(sum(bool(updater.BENCHMARK.search(c['question'])) for c in cards),1)
+        repair=json.loads(json.loads(call.call_args.args[0].data)['messages'][-1]['content'])
+        self.assertEqual(repair['remainingBenchmarkSlots'],0)
+
+    def test_terminal_rejection_keeps_a_safe_card_specific_reason_and_attempt_count(self):
+        sources, raw=self.fixture();raw['cards'][2]['answer']='過長的導讀'*100
+        with patch.object(updater,'api_open',return_value=self.completion(raw)) as call:
+            with self.assertRaises(updater.ContentRejected) as raised:updater.generate(sources,[],'test-key')
+        self.assertEqual(call.call_count,6)
+        self.assertEqual(raised.exception.attempts,6)
+        self.assertIn('卡3',str(raised.exception))
+        self.assertIn('80–320',str(raised.exception))
+        self.assertNotIn('test-key',str(raised.exception))
+
+    def test_alternate_article_history_records_what_was_published_not_initial_plan(self):
+        sources, raw=self.fixture();cards=updater.validate_cards(raw,sources,[])
+        original=sources[0]['url'];cards[0]['sourceUrl']=original+'-alternative'
+        with patch.object(updater,'collect_articles',return_value=sources),patch.object(updater,'select_sources',return_value=sources),patch.object(updater,'generate',return_value=cards):
+            payload, _=updater.refresh({'cards':[]},datetime(2026,10,14,tzinfo=timezone.utc),'test-key')
+        self.assertIn(cards[0]['sourceUrl'],payload['sourceHistory'])
+        self.assertNotIn(original,payload['sourceHistory'])
 
     def rss(self, sources):
         return ('<rss><channel>'+''.join('<item><title>'+s['title']+'</title><link>'+s['url']+'</link><pubDate>Sat, 10 Oct 2026 00:00:00 GMT</pubDate></item>' for s in sources)+'</channel></rss>').encode()
@@ -170,7 +313,7 @@ class FeedTests(unittest.TestCase):
         sources, raw=self.fixture()
         sources[-1]['platform']=sources[0]['platform']
         self.assertIsNone(updater.choose_edition(sources,[]))
-        with patch.object(updater,'article_body') as request,self.assertRaises(updater.ContentRejected):
+        with patch.object(updater,'article_body') as request,self.assertRaises(updater.SelectionUnavailable):
             updater.select_sources(sources,[])
         request.assert_not_called()
         with self.assertRaisesRegex(ValueError,'Repeated publisher platform'):
@@ -233,10 +376,11 @@ class FeedTests(unittest.TestCase):
             root=Path(directory); (root/'data').mkdir()
             target=root/'data/cards.json'; target.write_text(json.dumps(previous))
             with patch.object(updater,'ROOT',root),patch.dict('os.environ',{'LLM_API_KEY':'test-key'}),patch.object(updater,'collect_articles',return_value=sources),patch.object(updater,'generate') as paid:
-                self.assertEqual(updater.main(),0)
+                self.assertEqual(updater.main(),1)
             paid.assert_not_called()
             after=json.loads(target.read_text())
-            self.assertEqual(after['status'],'content-retained')
+            self.assertEqual(after['status'],'selection-unavailable')
+            self.assertIn('平台',after['updateReason'])
             self.assertEqual(after['cards'],previous['cards'])
             self.assertEqual(after['generatedAt'],previous['generatedAt'])
 
@@ -284,7 +428,7 @@ class FeedTests(unittest.TestCase):
             with self.subTest(content=content), patch.object(updater,'api_open',return_value=self.api_response(raw)) as call:
                 with self.assertRaises(updater.ContentRejected):
                     updater.generate(sources,[],'test-key')
-                self.assertEqual(call.call_count,3)
+                self.assertEqual(call.call_count,updater.MAX_GENERATION_ATTEMPTS)
 
     def test_rejects_one_paragraph_or_four_paragraph_drafts(self):
         for count in [1,4]:
@@ -511,7 +655,7 @@ class FeedTests(unittest.TestCase):
         response.read.return_value=json.dumps({'choices':[{'finish_reason':'length'}]}).encode()
         with patch.object(updater,'api_open',return_value=response) as call, self.assertRaises(updater.ContentRejected):
             updater.generate(sources,[],'test-key')
-        self.assertEqual(call.call_count,3)
+        self.assertEqual(call.call_count,updater.MAX_GENERATION_ATTEMPTS)
 
     def test_length_repair_succeeds_with_one_revision(self):
         from unittest.mock import MagicMock
@@ -533,21 +677,25 @@ class FeedTests(unittest.TestCase):
         self.assertIn('80–320',repair)
         self.assertIn('"answer": 500',repair)
 
-    def test_content_rollback_is_success_and_keeps_previous_version(self):
+    def test_exhausted_generation_is_failure_without_overwriting_previous_version(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
             (root/'data').mkdir()
             target=root/'data/cards.json'
-            previous={'editionId':'old','generatedAt':'2026-10-10','cards':['old']}
+            previous=self.edition()
             target.write_text(json.dumps(previous))
-            with patch.object(updater,'ROOT',root), patch.object(updater,'load_previous',return_value=previous), patch.object(updater,'refresh',side_effect=updater.ContentRejected('length')), patch.object(updater,'report_failure') as report:
-                self.assertEqual(updater.main(),0)
+            reason='卡3：卡片導讀格式不正確：必須是 80–320 字的文字。'
+            with patch.object(updater,'ROOT',root), patch.object(updater,'load_previous',return_value=previous), patch.object(updater,'refresh',side_effect=updater.ContentRejected(reason,attempts=6)), patch.object(updater,'report_failure') as report:
+                self.assertEqual(updater.main(),1)
             result=json.loads(target.read_text())
-            self.assertEqual(result['editionId'],'old')
-            self.assertEqual(result['cards'],['old'])
-            self.assertEqual(result['generatedAt'],'2026-10-10')
-            self.assertEqual(result['status'],'content-retained')
-            report.assert_not_called()
+            self.assertEqual(result['editionId'],previous['editionId'])
+            self.assertEqual(result['cards'],previous['cards'])
+            self.assertEqual(result['generatedAt'],previous['generatedAt'])
+            self.assertEqual(result['status'],'generation-failed')
+            self.assertEqual(result['generationAttempts'],6)
+            self.assertEqual(result['updateReason'],reason)
+            self.assertIsNotNone(updater.read_edition(target))
+            report.assert_called_once_with(reason)
 
 if __name__ == '__main__':
     unittest.main()

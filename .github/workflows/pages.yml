@@ -18,7 +18,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -43,7 +43,7 @@ jobs:
           path: data/cards.json
           key: cards-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: cards-
-      - name: Generate DeepSeek cards (retain previous edition on failure)
+      - name: Generate DeepSeek cards (repair up to 6 requests)
         id: refresh
         continue-on-error: true
         env:

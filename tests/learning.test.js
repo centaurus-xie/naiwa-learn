@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createSession,advance,validCards,feedStatus,completedCards} from '../learning.js';
+import {createSession,advance,validCards,feedStatus,completedCards,dayKey} from '../learning.js';
 const cards=Array.from({length:5},(_,i)=>({id:String(i),question:'Q',answer:'A',category:'AI'}));
 test('review returns card to end without awarding progress',()=>{
   const s=advance(createSession(cards,'2026-10-11'),false);
@@ -51,7 +51,7 @@ test('reject damaged feeds rather than silently showing fewer cards',()=>{
 test('bad timestamps never interrupt reading or claim a new release',()=>{
   const status=feedStatus({generatedAt:'garbage',checkedAt:{},status:'content-retained'});
   assert.ok(!status.includes('新卡發布'));
-  assert.ok(status.includes('沿用上一版'));
+  assert.ok(status.includes('先前版本'));
 });
 test('fallback status and successful publication are distinct',()=>{
   assert.ok(feedStatus({offline:true,generatedAt:'2026-10-11T00:00:00Z'}).includes('本機保存'));
@@ -79,4 +79,17 @@ test('all five completed cards remain available to reread after reload',()=>{
   assert.equal(completedCards(state).length,5);
   assert.equal(state.queue.length,0);
   assert.deepEqual(completedCards(createSession(cards,'2026-10-13',state)),[]);
+});
+test('publication and check dates always use Hong Kong time',()=>{
+  const text=feedStatus({generatedAt:'2026-10-12T07:36:41.746691+00:00',checkedAt:'2026-10-13T06:45:42.611353+00:00'});
+  assert.ok(text.includes('15:36'));
+  assert.ok(text.includes('14:45'));
+  assert.ok(text.includes('香港時間（UTC+8）'));
+  assert.equal(dayKey(new Date('2026-10-13T16:30:00Z')),'2026-10-14');
+});
+test('failure status shows attempts and a concrete safe reason, not a successful fallback',()=>{
+  const text=feedStatus({status:'generation-failed',generationAttempts:6,updateReason:'卡2：導讀長度不符。'});
+  assert.ok(text.includes('已嘗試 6 次'));
+  assert.ok(text.includes('卡2'));
+  assert.ok(!text.includes('今日卡片已備妥'));
 });

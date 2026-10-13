@@ -1,7 +1,7 @@
 """Local browser fault checks, never shipped to Pages or calls an LLM.
 
 Run from the repository root: python3 tests/browser_server.py
-Use /?fault=healthy, invalid-json, incomplete, unavailable, new-edition, bad-date.
+Use /?fault=healthy, invalid-json, incomplete, unavailable, new-edition, bad-date, timezone.
 This server only changes its own in-memory response; repository data stays intact.
 """
 import json
@@ -32,6 +32,11 @@ class Handler(SimpleHTTPRequestHandler):
         elif self.fault == 'bad-date':
             data['generatedAt'] = 'not-a-date'
             data['checkedAt'] = {}
+        elif self.fault == 'timezone':
+            data.update({'generatedAt':'2026-10-12T07:36:41.746691+00:00',
+                         'checkedAt':'2026-10-13T06:45:42.611353+00:00',
+                         'status':'generation-failed','generationAttempts':6,
+                         'updateReason':'本機顯示測試：這不是實際生成結果。'})
         elif self.fault == 'unavailable':
             status = 503
         body = b'{broken json' if self.fault == 'invalid-json' else json.dumps(data,ensure_ascii=False).encode()

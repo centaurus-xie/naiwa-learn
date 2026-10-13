@@ -1,5 +1,5 @@
 export function dayKey(date = new Date()) {
-  return new Intl.DateTimeFormat('en-CA', {year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
+  return new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Hong_Kong',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
 }
 
 export function validCards(cards) {
@@ -13,18 +13,23 @@ export function feedStatus(feed) {
   const format=(value)=>{
     if(typeof value!=='string') return null;
     const date=new Date(value);
-    return Number.isNaN(date.getTime()) ? null : new Intl.DateTimeFormat('zh-Hant',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}).format(date);
+    return Number.isNaN(date.getTime()) ? null : new Intl.DateTimeFormat('zh-Hant',{timeZone:'Asia/Hong_Kong',hourCycle:'h23',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}).format(date);
   };
   const published=format(feed.generatedAt), checked=format(feed.checkedAt);
   let label=published ? `新卡發布 ${published} · AI 整理，請參照原文` : '基礎概念卡 · 尚未生成 AI 新卡';
   if(checked) label+=` ｜ 檢查 ${checked}`;
+  if(published || checked) label+=' · 香港時間（UTC+8）';
   const states={
     'no-new-articles':'暫無新文章',
     'already-generated-today':'今日卡片已備妥',
     'update-failed':'更新未成功，保留原卡',
-    'content-retained':'本次新卡未通過校驗，沿用上一版'
+    'content-retained':'本次更新未完成，顯示的是先前版本',
+    'generation-failed':'新卡生成失敗，請查看更新原因',
+    'selection-unavailable':'可讀來源或題材不足，尚未發布新卡'
   };
   if(typeof feed.status==='string' && Object.hasOwn(states,feed.status)) label+=' · '+states[feed.status];
+  if(feed.status==='generation-failed' && Number.isInteger(feed.generationAttempts) && feed.generationAttempts>0) label+=`（已嘗試 ${feed.generationAttempts} 次）`;
+  if(['generation-failed','selection-unavailable','update-failed'].includes(feed.status) && typeof feed.updateReason==='string') label+=' · '+feed.updateReason.slice(0,260);
   return label;
 }
 
