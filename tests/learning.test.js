@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createSession,advance,validCards,feedStatus,completedCards,dayKey} from '../learning.js';
+import {createSession,advance,validCards,feedStatus,completedCards,dayKey,startReading} from '../learning.js';
 const cards=Array.from({length:5},(_,i)=>({id:String(i),question:'Q',answer:'A',category:'AI'}));
 test('review returns card to end without awarding progress',()=>{
   const s=advance(createSession(cards,'2026-10-11'),false);
@@ -92,4 +92,41 @@ test('failure status shows attempts and a concrete safe reason, not a successful
   assert.ok(text.includes('已嘗試 6 次'));
   assert.ok(text.includes('卡2'));
   assert.ok(!text.includes('今日卡片已備妥'));
+});
+test('opening the first card starts continuous reading without marking it read',()=>{
+  const initial=createSession(cards,'2026-10-16');
+  const opened=startReading(initial);
+  assert.equal(initial.readingStarted,false);
+  assert.equal(opened.readingStarted,true);
+  assert.deepEqual(opened.queue,initial.queue);
+  assert.deepEqual(opened.completed,[]);
+});
+test('continuous reading survives next, later and same-edition reload',()=>{
+  let state=startReading(createSession(cards,'2026-10-16',null,'edition'));
+  state=advance(state,false);
+  assert.equal(state.readingStarted,true);
+  state=advance(state,true);
+  assert.equal(state.readingStarted,true);
+  assert.equal(createSession(cards,'2026-10-16',JSON.parse(JSON.stringify(state)),'edition').readingStarted,true);
+});
+test('new day or edition restores the first-card reveal',()=>{
+  const state=startReading(createSession(cards,'2026-10-16',null,'edition'));
+  assert.equal(createSession(cards,'2026-10-17',state,'edition').readingStarted,false);
+  assert.equal(createSession(cards,'2026-10-16',state,'other-edition').readingStarted,false);
+});
+test('old saved progress migrates reading mode without losing read cards',()=>{
+  let state=advance(createSession(cards,'2026-10-16',null,'edition'),true);
+  delete state.readingStarted;
+  const restored=createSession(cards,'2026-10-16',state,'edition');
+  assert.equal(restored.readingStarted,true);
+  assert.deepEqual(restored.completed,['0']);
+  const fresh=createSession(cards,'2026-10-16',null,'edition');
+  fresh.readingStarted='true';
+  assert.equal(createSession(cards,'2026-10-16',fresh,'edition').readingStarted,false);
+});
+test('opening a completed session never reopens or changes it',()=>{
+  let state=startReading(createSession(cards,'2026-10-16'));
+  for(let i=0;i<5;i++) state=advance(state,true);
+  assert.deepEqual(startReading(state),state);
+  assert.equal(completedCards(state).length,5);
 });

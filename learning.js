@@ -42,13 +42,19 @@ export function createSession(cards, day, saved, editionId = null) {
     && Array.isArray(saved.queue) && Array.isArray(saved.completed) && saved.total===5
     && new Set([...saved.queue,...saved.completed]).size===5
     && saved.queue.length+saved.completed.length===5
-    && [...saved.queue,...saved.completed].every(id=>cards.some(c=>c.id===id))) return saved;
-  return {day,editionId:version,cards,queue:cards.map(c=>c.id),completed:[],total:5};
+    && [...saved.queue,...saved.completed].every(id=>cards.some(c=>c.id===id))) {
+    return {...saved,readingStarted:saved.readingStarted===true || saved.completed.length>0};
+  }
+  return {day,editionId:version,cards,queue:cards.map(c=>c.id),completed:[],total:5,readingStarted:false};
+}
+
+export function startReading(state) {
+  return state.queue.length ? {...state,readingStarted:true} : state;
 }
 export function advance(state,remembered) {
   if(!state.queue.length) return state;
   const [id,...remaining]=state.queue;
-  return {...state,queue:remembered?remaining:[...remaining,id],completed:remembered?[...state.completed,id]:state.completed};
+  return {...state,readingStarted:true,queue:remembered?remaining:[...remaining,id],completed:remembered?[...state.completed,id]:state.completed};
 }
 
 export function completedCards(state) {

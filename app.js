@@ -1,9 +1,10 @@
-import { createSession, advance, dayKey, validCards, feedStatus, completedCards } from './learning.js';
+import { createSession, advance, dayKey, validCards, feedStatus, completedCards, startReading } from './learning.js';
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'naiwa-learning-v1';
 let state;
 let revealed = false;
+let advancing = false;
 let today = dayKey();
 const cardTemplate = $('card').innerHTML;
 const date = new Intl.DateTimeFormat('zh-Hant', {timeZone:'Asia/Hong_Kong',month:'long', day:'numeric', weekday:'short'}).format(new Date());
@@ -19,6 +20,7 @@ function safeSource(value) {
 }
 function render() {
   revealed = false;
+  document.body.classList.remove('has-reading-actions');
   const count = state.completed.length;
   $('review-entry').hidden=count===0;
   $('review-open').textContent=`今日已讀 · ${count} ↗`;
@@ -45,7 +47,7 @@ function render() {
     $('card').classList.add('complete');
     $('card').replaceChildren();
     const spark = document.createElement('span'); spark.className='card-spark'; spark.textContent='✳'; spark.setAttribute('aria-hidden','true');
-    const heading = document.createElement('h2'); heading.textContent='今天完成了。';
+    const heading = document.createElement('h2'); heading.textContent='今天完成了。'; heading.tabIndex=-1;
     const copy = document.createElement('p'); copy.textContent='又多懂了一點點。\n好奇心，我們明天繼續。'; copy.style.whiteSpace='pre-line';
     $('card').append(spark, heading, copy);
     $('guide-message').textContent='做得好！明天我還在這裡。';
@@ -70,31 +72,49 @@ function render() {
   const url=safeSource(card.sourceUrl);
   if(url) $('source').href=url; else $('source').removeAttribute('href');
   $('source').textContent=`${card.sourceName || '閱讀來源'}${card.publishedAt ? ' · '+card.publishedAt.slice(0,10) : ''} ↗`;
+  if(state.readingStarted) revealCard({focus:false});
 }
-function revealCard() {
+function revealCard({focus=true}={}) {
   if(revealed || !state?.queue.length) return;
+  if(!state.readingStarted) { state=startReading(state); save(); }
   revealed=true;
   $('answer').hidden=false;
   $('source').hidden=!$('source').hasAttribute('href');
   $('reveal').hidden=true;
   $('actions').hidden=false;
+  document.body.classList.add('has-reading-actions');
   $('card').classList.add('is-revealed');
   $('kicker').textContent='進展、意義與觀察';
   $('guide-message').textContent='這件事，可能和你想的有點不一樣。';
   $('hint').textContent='感興趣可以讀原文，或留到稍後再看。';
-  $('remember').focus({preventScroll:true});
+  if(focus) $('question').focus({preventScroll:true});
 }
 $('reveal').addEventListener('click', revealCard);
 $('card').addEventListener('click', (event) => {
   if (!event.target.closest('a, button')) revealCard();
 });
 function respond(remembered) {
-  if(!revealed) return;
+  if(!revealed || advancing) return;
+  // Continuous reading keeps the next button in place. Ignore a double tap
+  // while the replacement card arrives, so it cannot mark two cards read.
+  advancing=true;
+  $('again').disabled=true;
+  $('remember').disabled=true;
+  setTimeout(()=>{
+    advancing=false;
+    $('again').disabled=false;
+    $('remember').disabled=false;
+  },280);
   state=advance(state, remembered); save(); render();
   if(state.queue.length) {
     $('guide-message').textContent=remembered ? '收下這個新發現，再來一張。' : '沒關係，我們等一下再見一次。';
-    $('reveal').focus({preventScroll:true});
   }
+  // Read the next heading rather than focusing a hidden reveal button. Bring
+  // the new card back into view after advancing from the end of a long card.
+  $('card').querySelector('h2').focus({preventScroll:true});
+  const anchor=$('session-heading');
+  const top=anchor.getBoundingClientRect().top;
+  if(top<16 || top>window.innerHeight/2) anchor.scrollIntoView({block:'start',behavior:'auto'});
 }
 $('again').addEventListener('click',()=>respond(false));
 $('remember').addEventListener('click',()=>respond(true));

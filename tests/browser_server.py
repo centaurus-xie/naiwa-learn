@@ -1,7 +1,7 @@
 """Local browser fault checks, never shipped to Pages or calls an LLM.
 
 Run from the repository root: python3 tests/browser_server.py
-Use /?fault=healthy, invalid-json, incomplete, unavailable, new-edition, bad-date, timezone.
+Use /?fault=healthy, invalid-json, incomplete, unavailable, new-edition, bad-date, timezone, reading.
 This server only changes its own in-memory response; repository data stays intact.
 """
 import json
@@ -14,17 +14,32 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class Handler(SimpleHTTPRequestHandler):
-    fault = 'healthy'
-
     def do_GET(self):
         url = urlsplit(self.path)
-        if url.path == '/':
-            Handler.fault = parse_qs(url.query).get('fault', ['healthy'])[0]
         if url.path != '/data/cards.json':
             return super().do_GET()
+        # Derive the fixture from this tab's referrer, not a shared global.
+        # Cached HTML navigations need not request '/' again, and two tabs may
+        # intentionally exercise different failures at the same time.
+        referrer = urlsplit(self.headers.get('Referer', ''))
+        self.fault = parse_qs(referrer.query).get('fault', ['healthy'])[0]
         status = 200
         data = json.loads((ROOT / 'data/cards.json').read_text(encoding='utf-8'))
-        if self.fault == 'incomplete':
+        if self.fault == 'reading':
+            # Explicitly synthetic, long-form fixture for mobile layout checks.
+            # Never published or mixed into the real feed.
+            answer = ('這是一張本機介面測試卡，不是真實新聞。這個段落用來確認手機上較長的中文內容是否清楚易讀，'
+                      '並檢查標題、具名主體與正文之間的留白。讀者應該能自然地一路往下閱讀，而不是一直尋找按鈕。\n\n'
+                      '第二段測試連續閱讀：點開第一張後，下一張會直接顯示內容；選擇稍後再看不應增加已讀數。'
+                      '即使離開後重新整理，同一批卡片也應保留已讀進度與展開狀態，不需要再次逐張點開。\n\n'
+                      '最後一段用來檢查底部安全距離。固定操作欄不應蓋住段落、原文連結或今日已讀入口。'
+                      '這些文字只用來驗證排版與互動，不代表任何真實的研究結果、產品功能或醫療建議。')
+            data = {'editionId':'browser-reading-preview-v1','cards':[
+                {'id':'reading-preview-'+str(i),'category':'介面預覽','actor':'本機排版測試',
+                 'question':f'第{i+1}張預覽：長標題與三段導讀，在手機上也能輕鬆閱讀，不必反覆點開',
+                 'answer':answer,'sourceName':'本機介面測試 · 非真實新聞','sourceUrl':'https://example.com/',
+                 'newsTitle':'Long-source-title-preview: 較長的原文標題會自然換行，而不是擠出畫面'} for i in range(5)]}
+        elif self.fault == 'incomplete':
             data['cards'] = data['cards'][:4]
         elif self.fault == 'new-edition':
             data['editionId'] = 'browser-audit-new-edition'
