@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FEED = 'https://huggingface.co/blog/feed.xml'
 API_URL = 'https://api.deepseek.com/chat/completions'
 MODEL = 'deepseek-flash'
-PROMPT_VERSION = 'discovery-brief-v5'
+PROMPT_VERSION = 'discovery-brief-v6'
 MAX_GENERATION_ATTEMPTS = 6
 PUBLISHED_FEED = 'https://centaurus-xie.github.io/naiwa-learn/data/cards.json'
 MAX_API_BYTES = 1_000_000
@@ -84,6 +84,18 @@ APPLICATIONS = [
     ('創意設計', r'\b(video|music|image generation|3d|design\w*|creativ\w*|fabricat\w*)\b|影像|影片|视频|視頻|圖像|图像|音樂|音乐|設計|设计|創作|创作|影視|影视'),
     ('工作與工具', r'\b(workers?|workplace|workflow\w*|coding|software engineering|accessib\w*)\b|程式|代码|代碼|編程|编程|工作流|辦公|办公|工具|插件|助手|無障礙|无障碍'),
 ]
+# Bounded editorial signals, not a semantic fact checker. A paper is not a
+# negative signal by itself: accessible applied research is welcome.
+EDITORIAL_SIGNALS = {
+    'scenario': re.compile(r'\b(hospitals?|clinics?|classrooms?|farms?|factories|factory|workplace|workflow\w*|field trials?|real.world|daily life|disaster\w*|visually impaired|blind people)\b|醫院|医院|診間|诊室|課堂|课堂|農場|农场|工廠|工厂|工作流|日常生活|真實場景|真实场景|實地|实地|視障|视障|災害|灾害', re.I),
+    'problem': re.compile(r'\b(diagnos\w*|detect\w*|forecast\w*|monitor\w*|automat\w*|translat\w*|navigate|navigation|screening|drug discovery|protein design|save time|reduce costs?|reduce errors?)\b|診斷|诊断|檢測|检测|預警|预警|預測|预测|監測|监测|自動化|自动化|翻譯|翻译|導航|导航|篩查|筛查|藥物發現|药物发现|蛋白質設計|蛋白质设计|節省時間|节省时间|減少錯誤|减少错误', re.I),
+    'usable': re.compile(r'\b(open.source|available|released?|launch\w*|try it|demo\w*|tutorial\w*|walkthrough\w*|step.by.step|getting started)\b|開源|开源|已上線|已上线|正式推出|可試用|可试用|可以試用|可以试用|使用示例|操作示範|操作示范|入門教程|入门教程', re.I),
+    'mechanism': re.compile(r'\b(how it works|by combining|instead of|rather than|trade.offs?|compared with|compared to)\b|運作方式|运作方式|工作原理|透過|通过|取捨|取舍|相較|相较|相比|不再需要', re.I),
+    'limits': re.compile(r'\b(limitations?|privacy|failure\w*|risks?|pilot|prototype|not yet|small.scale)\b|限制|隱私|隐私|失敗|失败|風險|风险|試點|试点|原型|尚未|小規模|小规模', re.I),
+}
+THEORY = re.compile(r'\b(theorems?|lemmas?|formal proofs?|convergence (?:analysis|rates?|guarantees?)|regret bounds?|asymptotic\w*|theoretical (?:analysis|framework|bounds?))\b|定理|引理|收斂(?:性|率|分析)|收敛(?:性|率|分析)|理論(?:推導|界限|證明)|理论(?:推导|界限|证明)|形式化證明|形式化证明', re.I)
+HYPE = re.compile(r'\b(revolutionary|game.chang\w*|unprecedented|mind.blowing)\b|顛覆|颠覆|震撼|炸裂|史詩級|史诗级|改變一切|改变一切', re.I)
+PROMOTIONAL_NEWS = re.compile(r'\b(awards?|competitions?|winners?|anniversar\w*|appointed|fellowships?|scholarships?|fundraising|funding round)\b|頒獎|颁奖|獲獎|获奖|創業大賽|创业大赛|創業比賽|创业比赛|融資|融资|募資|募资', re.I)
 
 
 def digest(value):
@@ -196,6 +208,45 @@ def article_tags(article):
     return domain, bool(BENCHMARK.search(article['title']))
 
 
+def editorial_score(article, now=None):
+    """Favor explainable use and insight over maths, hype and leaderboard wins.
+
+    With a body, positive signals must occur there, not only in a catchy title
+    or RSS teaser. Each signal counts once regardless of article length.
+    """
+    title = article['title']
+    text = article.get('body') or article.get('summary', '')
+    signals = {name: bool(pattern.search(text)) for name, pattern in EDITORIAL_SIGNALS.items()}
+    score = (4 * bool(article_tags(article)[0]) + 5 * signals['scenario']
+             + 4 * signals['problem'] + 2 * signals['usable']
+             + 2 * signals['mechanism'] + 2 * signals['limits'])
+    applied = signals['scenario'] or signals['problem']
+    if THEORY.search(title):
+        score -= 2 if applied else 8
+    elif THEORY.search(text):
+        score -= 1 if applied else 4
+    if BENCHMARK.search(title):
+        score -= 6
+    if HYPE.search(title):
+        score -= 2
+    if INSTITUTIONAL_NEWS.search(title) or PROMOTIONAL_NEWS.search(title):
+        score -= 6
+    published = iso_date(article.get('publishedAt'))
+    if published:
+        age = ((now or datetime.now(timezone.utc)) - published).days
+        score -= 7 if age > 21 else 3 if age > 7 else 0
+    return score
+
+
+def candidate_groups(articles, history, now=None):
+    groups = {}
+    for article in articles:
+        groups.setdefault(article.get('platform', urlparse(article['url']).netloc), []).append(article)
+    for group in groups.values():
+        group.sort(key=lambda a: (a['url'] not in history, editorial_score(a, now), a['publishedAt']), reverse=True)
+    return groups
+
+
 def parse_feed(xml, now, source_key='huggingface'):
     source = SOURCES[source_key]
     articles, seen = [], set()
@@ -264,19 +315,25 @@ def collect_articles(now):
     return sorted(unique.values(), key=lambda a: a['publishedAt'], reverse=True)
 
 
-def choose_edition(articles, history):
+def choose_edition(articles, history, now=None):
     """Five different platforms, benchmark <= 1, two application domains."""
+    now = now or datetime.now(timezone.utc)
     best, best_score = None, None
+    # These values do not depend on the combination. In particular, never scan
+    # five full bodies again for every candidate combination.
+    tags_by_url = {a['url']: article_tags(a) for a in articles}
+    quality_by_url = {a['url']: editorial_score(a, now) for a in articles}
     for candidate in combinations(articles, 5):
         platforms = [a.get('platform', urlparse(a['url']).netloc) for a in candidate]
         if len(set(platforms)) != 5:
             continue
-        tags = [article_tags(article) for article in candidate]
+        tags = [tags_by_url[a['url']] for a in candidate]
         domains = {domain for domain, _ in tags if domain}
         benchmarks = sum(benchmark for _, benchmark in tags)
         if len(domains) < 2 or benchmarks > 1 or not any(a['url'] not in history for a in candidate):
             continue
-        score = (sum(a['url'] not in history for a in candidate), min(sum(bool(a.get('region')) for a in candidate), 2), min(len(domains), 3),
+        score = (sum(a['url'] not in history for a in candidate), sum(quality_by_url[a['url']] for a in candidate),
+                 min(sum(bool(a.get('region')) for a in candidate), 2), min(len(domains), 3),
                  min(sum(bool(domain) for domain, _ in tags), 3), len(set(platforms)), -benchmarks,
                  sum(iso_date(a['publishedAt']).timestamp() for a in candidate))
         if best_score is None or score > best_score:
@@ -284,16 +341,15 @@ def choose_edition(articles, history):
     return best
 
 
-def select_sources(articles, history):
-    # Bound both the combination search and network work. Round-robin candidates
-    # ensure a prolific feed cannot push other platforms out of the pool.
-    groups = {}
-    for article in articles:
-        groups.setdefault(article.get('platform', urlparse(article['url']).netloc), []).append(article)
-    for group in groups.values():
-        group.sort(key=lambda a: (a['url'] not in history, bool(article_tags(a)[0]),
-                                  not article_tags(a)[1], a['publishedAt']), reverse=True)
+def select_sources(articles, history, now=None):
+    # Normally compare two readable candidates per platform before choosing, rather
+    # than stopping at the first readable article. Failed fetches are memoized.
+    now = now or datetime.now(timezone.utc)
+    groups = candidate_groups(articles, history, now)
     candidates = [group[i] for i in range(6) for group in groups.values() if len(group) > i][:24]
+    if choose_edition(candidates, history, now) is None:
+        raise SelectionUnavailable('候選無法組成五個不同平台、兩個應用領域且至多一篇評測的新選題。')
+    groups = candidate_groups(candidates, history, now)
     bodies, fetches = {}, 0
     def read(article):
         try:
@@ -301,21 +357,33 @@ def select_sources(articles, history):
         except (OSError, ValueError):
             return None
     while True:
-        plan = choose_edition(candidates, history)
-        if not plan:
-            platforms = {a.get('platform', urlparse(a['url']).netloc) for a in candidates}
+        readable = [{**a, 'body': bodies[a['url']]} for a in candidates if bodies.get(a['url']) is not None]
+        plan = choose_edition(readable, history, now)
+        available = {a['url'] for a in readable}
+        missing = []
+        for group in groups.values():
+            unread = next((a for a in group if a['url'] not in bodies), None)
+            if unread and sum(a['url'] in available for a in group) < 2:
+                missing.append(unread)
+        if not missing and plan:
+            return plan
+        if fetches >= 18:
+            if plan:
+                return plan
+            raise SelectionUnavailable('正文讀取已達 18 篇上限，仍無法組成五個不同平台、兩個應用領域且至多一篇評測的新選題。')
+        if not missing:
+            # The top two per platform may not cover enough domains. Try the
+            # next candidate from each platform without weakening hard rules.
+            missing = [next((a for a in group if a['url'] not in bodies), None) for group in groups.values()]
+            missing = [a for a in missing if a is not None]
+        if not missing:
+            platforms = {a.get('platform', urlparse(a['url']).netloc) for a in readable}
             raise SelectionUnavailable('可讀候選剩下 ' + str(len(platforms)) + ' 個平台；仍需五個不同平台、兩個應用領域且至多一篇評測。')
-        missing = [a for a in plan if a['url'] not in bodies]
-        if fetches + len(missing) > 18:
-            raise ValueError('Not enough readable articles for a new edition')
+        missing = missing[:18-fetches]
         fetches += len(missing)
         with ThreadPoolExecutor(max_workers=4) as pool:
             for article, body in zip(missing, pool.map(read, missing)):
                 bodies[article['url']] = body
-        failed = {a['url'] for a in plan if bodies[a['url']] is None}
-        if not failed:
-            return [{**a, 'body': bodies[a['url']]} for a in plan]
-        candidates = [a for a in candidates if a['url'] not in failed]
 
 
 class ArticleParser(HTMLParser):
@@ -450,6 +518,7 @@ def generate(articles, previous_questions, api_key, alternatives=(), source_hist
     system = '''你是「奶蛙小課堂」的 AI 科技編輯，為好奇的成年人製作每日新知導讀。讀者想了解 AI 正在發生什麼、為何值得關注，以及對真實工作與生活的意義。
 根據提供的文章正文，為 targetSourceIndexes 中每個索引各製作一張繁體中文卡片。初稿是五張；修訂時只輸出尚未通過的卡片，不重寫已合格卡片。sourceIndex 必須使用文章給定的索引。
 每張選一個具體的新技術、新發現、新應用或工程實踐。用讀者能理解的語言，保留真正有辨識度的細節；必要術語用一句話解釋。不要出考題、要求回憶名詞、列背誦重點或使用「請問／下列何者／正確答案」等語氣。
+這不是論文摘要或學術課堂。從「它讓誰能做什麼、解決哪個具體問題」切入，再用日常語言解釋一個關鍵機制；不按論文的背景、方法、實驗順序縮寫，不堆砌縮寫、公式、損失函數或榜單數字。必要專有名詞至多挑一兩個並順手解釋，不假設讀者懂機器學習。有應用價值的研究可以介紹，但原型、試點與已部署產品必須區分，不能為了接地氣編造使用者、情境或可用性；正文只支持探索階段時就明說。
 這一批已按平台與應用領域混合選題。重點是 AI 如何被用在具體領域、改變哪些工作方式與取捨；至少兩張介紹不同領域的應用，至多一張以模型評測或排名為主題。不要把多篇應用文章改寫成模型打分、排行榜或基準成績的摘要。成績只可作為理解應用的輔助證據，保留測試條件，不將實驗原型寫成已廣泛部署。
 五篇文章來自五個不同平台，不可將同平台的不同欄目或組織帳號當成不同來源。來源標有「媒體報導」時，將未獨立驗證的結果明確寫為報導或受訪團隊的說法，不偽裝成官方發布或已查證事實。region 只表示來源地區，不代表事件或應用發生地，不能據此猜測地點。
 每張都必須能獨立讀懂「誰做了什麼」。actor 欄位填正文、文章標題或 sourceName 中逐字出現的具名機構、團隊、人物或專案名稱（2–80 字元，保留原文名稱），並在 answer 第一段明確提到這個名稱及其角色。不要只說「作者／研究者／他們」；不確定研發者時可寫「MIT News 報導…」等具名來源歸屬，並說明正文未交代研發團隊，不能把發布平台當成研發者或編造姓名。
@@ -472,6 +541,7 @@ category：2–12 字，使用有辨識度的主題標籤。
     articles = [dict(article) for article in articles]
     accepted, issues, drafts, last_codes = {}, [], {}, {}
     replacements = 0
+    ranked_alternatives = sorted(alternatives, key=lambda a: (a['url'] not in source_history, editorial_score(a), a['publishedAt']), reverse=True)
     for attempt in range(MAX_GENERATION_ATTEMPTS):
         pending = [index for index in range(5) if index not in accepted]
         # After three unsuccessful passes, try a different article for a source
@@ -480,7 +550,7 @@ category：2–12 字，使用有辨識度的主題標籤。
             for index in pending:
                 if last_codes.get(index) not in {'Unclear attribution', 'Evidence not found in source', 'Missing requested card'}:
                     continue
-                for candidate in alternatives:
+                for candidate in ranked_alternatives:
                     if replacements >= 4:
                         break
                     current = articles[index]
@@ -726,7 +796,7 @@ def refresh(previous, now, api_key):
             return {**previous, 'checkedAt': stamp, 'status': 'already-generated-today'}, False
     if not unseen and previous.get('mode') == 'llm':
         return {**previous, 'checkedAt': stamp, 'status': 'no-new-articles'}, False
-    sources = select_sources(articles, history)
+    sources = select_sources(articles, history, now=now)
     previous_questions = previous.get('questionHistory', [])[-100:]
     cards = generate(sources, previous_questions, api_key, alternatives=articles, source_history=history)
     completed_at = datetime.now(timezone.utc).isoformat()

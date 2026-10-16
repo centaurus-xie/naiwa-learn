@@ -309,6 +309,143 @@ class FeedTests(unittest.TestCase):
         self.assertGreaterEqual(len({domain for domain,_ in tags if domain}),2)
         self.assertLessEqual(sum(benchmark for _,benchmark in tags),1)
 
+    def test_platform_compares_bodies_and_prefers_useful_article_over_newest_theory(self):
+        sources, _=self.fixture()
+        sources[0]={**sources[0], 'publishedAt':'2026-10-15T00:00:00Z',
+                    'title':'AI diagnosis theorem proves a new convergence rate',
+                    'summary':'A formal proof of a theoretical bound.'}
+        practical={**sources[0], 'url':sources[0]['url']+'-practical',
+                   'publishedAt':'2026-10-14T00:00:00Z',
+                   'title':'AI assists hospital diagnosis in a small pilot',
+                   'summary':'Doctors use a prototype to detect disease in hospital workflows.'}
+        def read(url):
+            if url==practical['url']: return 'Hospital doctors detect disease. Compared with manual screening, the prototype has privacy limitations.'
+            if url==sources[0]['url']: return 'We prove a theorem with a convergence rate and an asymptotic regret bound.'
+            return 'A supported research finding.'
+        with patch.object(updater,'article_body',side_effect=read) as call:
+            selected=updater.select_sources(sources+[practical],[],datetime(2026,10,16,tzinfo=timezone.utc))
+        self.assertIn(practical['url'],[a['url'] for a in selected])
+        self.assertNotIn(sources[0]['url'],[a['url'] for a in selected])
+        self.assertEqual(call.call_count,6)
+        self.assertEqual(len({a['platform'] for a in selected}),5)
+
+    def test_body_comparison_does_not_trust_an_applied_clickbait_teaser(self):
+        sources, _=self.fixture()
+        sources[0]={**sources[0], 'title':'AI tool for medical diagnosis',
+                    'summary':'Available hospital demo detects disease, compared with a prototype with limitations.'}
+        sources[0].pop('body')  # RSS metadata, before either full text is read.
+        real={**sources[0], 'url':sources[0]['url']+'-real', 'summary':'A research finding.'}
+        self.assertGreater(updater.editorial_score(sources[0]),updater.editorial_score(real))
+        def read(url):
+            if url==sources[0]['url']: return 'A theorem about convergence rates. We derive a formal proof.'
+            if url==real['url']: return 'Hospital doctors detect disease. A pilot has privacy limitations compared with manual screening.'
+            return 'Supported research content.'
+        with patch.object(updater,'article_body',side_effect=read):
+            selected=updater.select_sources(sources+[real],[])
+        self.assertIn(real['url'],[a['url'] for a in selected])
+
+    def test_two_readable_competitors_per_platform_are_compared_before_selecting(self):
+        sources, _=self.fixture()
+        competitors=[{**a,'url':a['url']+'-other'} for a in sources]
+        with patch.object(updater,'article_body',return_value='Supported research content.') as read, patch.object(updater,'api_open') as paid:
+            selected=updater.select_sources(sources+competitors,[])
+        self.assertEqual(len(selected),5)
+        self.assertEqual(read.call_count,10)
+        self.assertEqual(len({c.args[0] for c in read.call_args_list}),10)
+        paid.assert_not_called()
+
+    def test_chinese_applied_story_beats_pure_theory_without_banning_research(self):
+        sources, _=self.fixture()
+        theoretical={**sources[0], 'title':'大模型收敛率定理与理论证明', 'body':'提出收敛率分析与理论界限。'}
+        practical={**sources[0], 'title':'研究论文介绍医院AI诊断原型',
+                   'body':'医院开展小规模试点，辅助医生诊断，通过对比识别遗漏，说明隐私限制。'}
+        self.assertGreater(updater.editorial_score(practical),updater.editorial_score(theoretical))
+        plain={**practical,'title':'医院AI诊断原型'}
+        self.assertEqual(updater.editorial_score(practical),updater.editorial_score(plain))
+
+    def test_editorial_signals_are_capped_and_old_news_has_a_recency_penalty(self):
+        sources, _=self.fixture()
+        body='Hospital doctors detect disease using a prototype with privacy limitations compared with manual screening. '
+        article={**sources[0],'body':body,'publishedAt':'2026-10-15T00:00:00Z'}
+        now=datetime(2026,10,16,tzinfo=timezone.utc)
+        score=updater.editorial_score(article,now)
+        self.assertEqual(score,updater.editorial_score({**article,'body':body*100},now))
+        self.assertEqual(score-3,updater.editorial_score({**article,'publishedAt':'2026-10-02T00:00:00Z'},now))
+        self.assertEqual(score-7,updater.editorial_score({**article,'publishedAt':'2026-09-16T00:00:00Z'},now))
+
+    def test_awards_and_fundraising_do_not_beat_substantive_application_stories(self):
+        sources, _=self.fixture()
+        body='A hospital prototype can detect disease, with privacy limitations compared with manual screening.'
+        application={**sources[0],'title':'AI medical diagnosis pilot','body':body}
+        for title in ['AI entrepreneurship competition winners announced','大模型公司完成新一轮融资']:
+            with self.subTest(title=title):
+                self.assertGreater(updater.editorial_score(application),updater.editorial_score({**application,'title':title}))
+
+    def test_prolific_platform_does_not_hide_its_useful_article_outside_pool(self):
+        sources, _=self.fixture()
+        theory=[{**sources[0],'url':sources[0]['url']+'-theory-'+str(i),
+                 'title':'AI theorem with a convergence rate '+str(i),'body':'Formal proof of a theorem.'} for i in range(30)]
+        practical={**sources[0],'url':sources[0]['url']+'-practical',
+                   'title':'Hospital AI diagnosis pilot', 'summary':'Hospital doctors detect disease. A prototype has privacy limitations.'}
+        with patch.object(updater,'article_body',return_value=practical['summary']) as read:
+            selected=updater.select_sources(theory+sources[1:]+[practical],[])
+        self.assertIn(practical['url'],[a['url'] for a in selected])
+        self.assertLessEqual(read.call_count,18)
+
+    def test_selection_looks_beyond_two_when_application_diversity_is_missing(self):
+        sources, _=self.fixture()
+        articles=[{**a,'url':a['url']+'-'+str(i),'title':'AI medical diagnosis in a hospital',
+                   'summary':'Hospital doctors detect disease.'} for a in sources for i in range(2)]
+        extra={**sources[0],'url':sources[0]['url']+'-science','title':'AI protein prediction', 'summary':''}
+        with patch.object(updater,'article_body',return_value='Supported research content.') as read:
+            selected=updater.select_sources(articles+[extra],[])
+        self.assertIn(extra['url'],[a['url'] for a in selected])
+        self.assertEqual(read.call_count,11)
+
+    def test_comparison_budget_keeps_valid_plan_even_if_competitors_are_unreadable(self):
+        sources, _=self.fixture()
+        articles=[{**a,'url':a['url']+'-'+str(i)} for a in sources for i in range(6)]
+        good={a['url']+'-0' for a in sources}
+        def read(url):
+            if url not in good: raise TimeoutError()
+            return 'A supported research finding.'
+        with patch.object(updater,'article_body',side_effect=read) as call:
+            selected=updater.select_sources(articles,[])
+        self.assertEqual({a['url'] for a in selected},good)
+        self.assertEqual(call.call_count,18)
+        self.assertEqual(len({c.args[0] for c in call.call_args_list}),18)
+
+    def test_fresh_unused_candidates_still_take_priority_over_repeated_articles(self):
+        sources, _=self.fixture()
+        seen={**sources[0],'url':sources[0]['url']+'-seen',
+              'title':'Hospital AI diagnosis pilot', 'body':'Hospital doctors detect disease. A prototype has privacy limitations.'}
+        selected=updater.choose_edition(sources+[seen],[seen['url']])
+        self.assertNotIn(seen['url'],[a['url'] for a in selected])
+
+    def test_generation_prompt_teaches_nonacademic_style_without_invented_uses(self):
+        sources, raw=self.fixture()
+        with patch.object(updater,'api_open',return_value=self.completion(raw)) as call:
+            updater.generate(sources,[],'test-key')
+        system=json.loads(call.call_args.args[0].data)['messages'][0]['content']
+        self.assertIn('這不是論文摘要或學術課堂',system)
+        self.assertIn('原型、試點與已部署產品必須區分',system)
+        self.assertIn('不能為了接地氣編造',system)
+
+    def test_repair_replacements_use_editorial_order_not_feed_input_order(self):
+        sources, valid=self.fixture()
+        invalid=json.loads(json.dumps(valid));invalid['cards'][0]['actor']='不存在的團隊'
+        theory={**sources[0],'url':sources[0]['url']+'-theory',
+                'title':'AI medical diagnosis theorem and convergence analysis','body':'A formal proof of a theorem.'}
+        practical={**sources[0],'url':sources[0]['url']+'-practical',
+                   'title':'Hospital AI medical diagnosis pilot',
+                   'summary':'Hospital doctors detect disease. A prototype has privacy limitations.'}
+        practical.pop('body')
+        replies=[self.completion(invalid) for _ in range(3)]+[self.completion({'cards':[valid['cards'][0]]})]
+        with patch.object(updater,'api_open',side_effect=replies),patch.object(updater,'article_body',return_value=sources[0]['body']) as read:
+            cards=updater.generate(sources,[],'test-key',alternatives=[theory,practical])
+        read.assert_called_once_with(practical['url'])
+        self.assertEqual(cards[0]['sourceUrl'],practical['url'])
+
     def test_one_article_per_platform_is_a_hard_rule(self):
         sources, raw=self.fixture()
         sources[-1]['platform']=sources[0]['platform']
