@@ -1,7 +1,8 @@
 """Local browser fault checks, never shipped to Pages or calls an LLM.
 
 Run from the repository root: python3 tests/browser_server.py
-Use /?fault=healthy, invalid-json, incomplete, unavailable, new-edition, bad-date, timezone, reading.
+Use /?fault=healthy, invalid-json, incomplete, unavailable, new-edition,
+bad-date, timezone, reading, guide, guide-failed.
 This server only changes its own in-memory response; repository data stays intact.
 """
 import json
@@ -25,7 +26,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.fault = parse_qs(referrer.query).get('fault', ['healthy'])[0]
         status = 200
         data = json.loads((ROOT / 'data/cards.json').read_text(encoding='utf-8'))
-        if self.fault == 'reading':
+        if self.fault in {'reading', 'guide', 'guide-failed'}:
             # Explicitly synthetic, long-form fixture for mobile layout checks.
             # Never published or mixed into the real feed.
             answer = ('這是一張本機介面測試卡，不是真實新聞。這個段落用來確認手機上較長的中文內容是否清楚易讀，'
@@ -39,6 +40,16 @@ class Handler(SimpleHTTPRequestHandler):
                  'question':f'第{i+1}張預覽：長標題與三段導讀，在手機上也能輕鬆閱讀，不必反覆點開',
                  'answer':answer,'sourceName':'本機介面測試 · 非真實新聞','sourceUrl':'https://example.com/',
                  'newsTitle':'Long-source-title-preview: 較長的原文標題會自然換行，而不是擠出畫面'} for i in range(5)]}
+            if self.fault != 'reading':
+                data.update({'editionId':'browser-guide-preview-'+self.fault,
+                             'generatedAt':'2026-10-16T00:17:00Z','checkedAt':'2026-10-16T00:18:00Z',
+                             'status':'updated'})
+                for card, category in zip(data['cards'], ['醫療應用','環境能源','工作工具','機器人交通','創意設計']):
+                    card.update({'category':category,'question':'本機預覽：'+category+'的用途與限制，用於測試奶蛙主題引導'})
+                if self.fault == 'guide-failed':
+                    data.update({'generatedAt':'2026-10-12T07:36:00Z',
+                                 'status':'generation-failed','generationAttempts':6,
+                                 'updateReason':'本機顯示測試：卡2導讀長度不符；這不是實際生成結果。'})
         elif self.fault == 'incomplete':
             data['cards'] = data['cards'][:4]
         elif self.fault == 'new-edition':

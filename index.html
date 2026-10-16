@@ -7,8 +7,8 @@
     <meta name="description" content="奶蛙小課堂，每天五個 AI 新發現，和奶蛙一起看懂新技術、新應用與背後的意義。" />
     <title>奶蛙小課堂 · AI Daily</title>
     <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./styles.css" />
-    <script type="module" src="./app.js"></script>
+    <link rel="stylesheet" href="./styles.css?v=20261016-2" />
+    <script type="module" src="./app.js?v=20261016-2"></script>
   </head>
   <body>
     <header class="topbar">
@@ -20,7 +20,7 @@
         <span class="eyebrow" id="date-label">YOUR DAILY LITTLE DISCOVERY</span>
         <h1 id="headline">世界更新很快，<br>我們<span class="highlight">慢慢學。</span></h1>
         <p class="intro-copy">每天 5 張 AI 小卡。<span class="intro-extra"><br>留兩分鐘，給好奇的自己。</span></p>
-        <div class="guide-scene">
+        <div class="guide-scene" id="guide-scene">
           <div class="speech" id="guide-message" role="status">嗨！今天也一起學一點吧。<span aria-hidden="true">✦</span></div>
           <div class="mascot-window"><img src="./assets/guide.png" alt="你的學習夥伴奶蛙：綠眼睛、微笑的黃色生物" class="mascot" /></div>
           <span class="guide-caption">奶蛙 · 你的好奇心夥伴</span>
@@ -38,7 +38,13 @@
         <div class="actions" id="actions" hidden><button class="again" id="again">↺ <span>稍後再看</span></button><button class="remember" id="remember"><span>下一個發現</span> <span aria-hidden="true">→</span></button></div>
         <div class="review-entry" id="review-entry" hidden><button id="review-open" aria-haspopup="dialog" aria-controls="review-dialog">今日已讀</button></div>
         <p class="hint" id="hint">看看發生了什麼，再想想它意味著什麼。</p>
-        <p class="feed-status" id="feed-status"></p>
+        <div class="feed-meta" id="feed-meta" hidden>
+          <p class="feed-status" id="feed-status" role="status"></p>
+          <details class="feed-details" id="feed-details">
+            <summary><span id="feed-detail-label">更新詳情</span><span class="detail-mark" aria-hidden="true">＋</span></summary>
+            <div class="feed-detail-body"><p id="feed-detail-text"></p><p class="feed-disclaimer">AI 整理可能有誤，請參照各卡片原文。</p></div>
+          </details>
+        </div>
         <p class="storage-notice" id="storage-notice" hidden>瀏覽器無法保存進度；這次仍可以正常學習。</p>
         <noscript>請啟用 JavaScript，即可翻卡學習。</noscript>
       </section>

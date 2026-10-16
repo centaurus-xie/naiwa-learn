@@ -1,4 +1,4 @@
-import { createSession, advance, dayKey, validCards, feedStatus, completedCards, startReading } from './learning.js';
+import { createSession, advance, dayKey, validCards, feedInfo, completedCards, startReading, guideMessage, completionMessage } from './learning.js?v=20261016-2';
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'naiwa-learning-v1';
@@ -17,6 +17,25 @@ function save() {
 function safeSource(value) {
   try { const u = new URL(value); return u.protocol === 'https:' ? u.href : null; }
   catch { return null; }
+}
+function renderFeed(feed) {
+  const info=feedInfo(feed);
+  $('feed-meta').hidden=false;
+  $('feed-meta').dataset.tone=info.tone;
+  $('feed-status').textContent=info.summary;
+  $('feed-detail-label').textContent=info.detailLabel;
+  $('feed-detail-text').textContent=info.details;
+}
+function updateGuide(phase='preview',reaction=null) {
+  const card=state.cards.find(c=>c.id===state.queue[0]);
+  const message=state.queue.length ? guideMessage(card,phase) : completionMessage(completedCards(state));
+  if($('guide-message').textContent!==message) $('guide-message').textContent=message;
+  const scene=$('guide-scene');
+  scene.removeAttribute('data-reaction');
+  if(reaction) {
+    void scene.offsetWidth;
+    scene.dataset.reaction=reaction;
+  }
 }
 function render() {
   revealed = false;
@@ -50,7 +69,7 @@ function render() {
     const heading = document.createElement('h2'); heading.textContent='今天完成了。'; heading.tabIndex=-1;
     const copy = document.createElement('p'); copy.textContent='又多懂了一點點。\n好奇心，我們明天繼續。'; copy.style.whiteSpace='pre-line';
     $('card').append(spark, heading, copy);
-    $('guide-message').textContent='做得好！明天我還在這裡。';
+    updateGuide();
     $('session-label').textContent='今天的五個發現，都看過了';
     $('hint').textContent='休息一下，讓新知慢慢發芽。';
     return;
@@ -73,6 +92,7 @@ function render() {
   if(url) $('source').href=url; else $('source').removeAttribute('href');
   $('source').textContent=`${card.sourceName || '閱讀來源'}${card.publishedAt ? ' · '+card.publishedAt.slice(0,10) : ''} ↗`;
   if(state.readingStarted) revealCard({focus:false});
+  else updateGuide();
 }
 function revealCard({focus=true}={}) {
   if(revealed || !state?.queue.length) return;
@@ -85,7 +105,7 @@ function revealCard({focus=true}={}) {
   document.body.classList.add('has-reading-actions');
   $('card').classList.add('is-revealed');
   $('kicker').textContent='進展、意義與觀察';
-  $('guide-message').textContent='這件事，可能和你想的有點不一樣。';
+  updateGuide('reading',focus ? 'peek' : null);
   $('hint').textContent='感興趣可以讀原文，或留到稍後再看。';
   if(focus) $('question').focus({preventScroll:true});
 }
@@ -106,9 +126,8 @@ function respond(remembered) {
     $('remember').disabled=false;
   },280);
   state=advance(state, remembered); save(); render();
-  if(state.queue.length) {
-    $('guide-message').textContent=remembered ? '收下這個新發現，再來一張。' : '沒關係，我們等一下再見一次。';
-  }
+  updateGuide('reading',state.queue.length ? (remembered ? 'nod' : 'tilt') : 'settle');
+  if(!remembered) $('hint').textContent='已留到稍後；先讀這個新發現。';
   // Read the next heading rather than focusing a hidden reveal button. Bring
   // the new card back into view after advancing from the end of a long card.
   $('card').querySelector('h2').focus({preventScroll:true});
@@ -163,6 +182,7 @@ async function start() {
       $('question').textContent='小卡暫時沒送到。';
       $('hint').textContent='檢查網路後，重新整理就可以再試一次。';
       $('reveal').hidden=true;
+      renderFeed({offline:true});
       return;
     }
   } finally {
@@ -171,6 +191,6 @@ async function start() {
   try { state=createSession(feed.cards,today,saved,feed.editionId || null); }
   catch { $('question').textContent='小卡正在整理中。'; $('hint').textContent='請稍後重新整理。'; return; }
   save(); render();
-  $('feed-status').textContent=feedStatus(feed);
+  renderFeed(feed);
 }
 start();

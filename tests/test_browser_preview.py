@@ -42,6 +42,21 @@ class BrowserPreviewTests(unittest.TestCase):
         _, status = self.response('unavailable')
         self.assertEqual(status, 503)
 
+    def test_guide_fixture_has_distinct_topics_and_explicitly_synthetic_content(self):
+        body, status = self.response('guide')
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertEqual(len({card['category'] for card in data['cards']}), 5)
+        self.assertEqual(data['status'], 'updated')
+        self.assertTrue(all('不是真實新聞' in card['answer'] for card in data['cards']))
+
+    def test_failure_details_fixture_never_claims_to_be_a_real_generation_result(self):
+        body, _ = self.response('guide-failed')
+        data = json.loads(body)
+        self.assertEqual(data['status'], 'generation-failed')
+        self.assertEqual(data['generationAttempts'], 6)
+        self.assertIn('這不是實際生成結果', data['updateReason'])
+
 
 if __name__ == '__main__':
     unittest.main()
