@@ -1,10 +1,12 @@
-import { createSession, advance, dayKey, validCards, feedInfo, completedCards, startReading, guideMessage, completionMessage } from './learning.js?v=20261016-2';
+import { createSession, advance, dayKey, validCards, feedInfo, completedCards, startReading, guideMessage, completionMessage, termsForCard, termSegments } from './learning.js?v=20261017-1';
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'naiwa-learning-v1';
 let state;
 let revealed = false;
 let advancing = false;
+let activeTermNote = null;
+let noteSequence = 0;
 let today = dayKey();
 const cardTemplate = $('card').innerHTML;
 const date = new Intl.DateTimeFormat('zh-Hant', {timeZone:'Asia/Hong_Kong',month:'long', day:'numeric', weekday:'short'}).format(new Date());
@@ -18,6 +20,61 @@ function safeSource(value) {
   try { const u = new URL(value); return u.protocol === 'https:' ? u.href : null; }
   catch { return null; }
 }
+function closeTermNote(restoreFocus=true) {
+  if(!activeTermNote) return;
+  const {trigger,panel}=activeTermNote;
+  panel.hidden=true;
+  trigger.setAttribute('aria-expanded','false');
+  activeTermNote=null;
+  if(restoreFocus && trigger.isConnected) trigger.focus({preventScroll:true});
+}
+function annotate(element, text, terms) {
+  const segments=termSegments(text,terms);
+  element.replaceChildren();
+  if(!segments.some(segment=>segment.note)) { element.textContent=text; return; }
+  const panel=document.createElement('aside');
+  panel.className='term-note'; panel.id=`term-note-${++noteSequence}`;
+  panel.hidden=true; panel.tabIndex=-1; panel.setAttribute('role','note');
+  panel.setAttribute('aria-labelledby',`${panel.id}-title`);
+  element.after(panel);
+  for(const segment of segments) {
+    if(!segment.note) { element.append(document.createTextNode(segment.text)); continue; }
+    const trigger=document.createElement('button');
+    trigger.type='button'; trigger.className='term-trigger'; trigger.textContent=segment.text;
+    trigger.setAttribute('aria-label',`${segment.text}：查看注釋`);
+    trigger.setAttribute('aria-expanded','false'); trigger.setAttribute('aria-controls',panel.id);
+    trigger.addEventListener('click',()=>{
+      const same=activeTermNote?.trigger===trigger;
+      closeTermNote(false);
+      if(same) { trigger.focus({preventScroll:true}); return; }
+      const title=document.createElement('strong');
+      title.id=`${panel.id}-title`; title.textContent=segment.note.term;
+      const copy=document.createElement('p'); copy.textContent=segment.note.definition;
+      const close=document.createElement('button');
+      close.type='button'; close.className='term-close'; close.textContent='×';
+      close.setAttribute('aria-label',`關閉「${segment.note.term}」注釋`);
+      close.addEventListener('click',()=>closeTermNote());
+      panel.replaceChildren(title,copy,close); panel.hidden=false;
+      trigger.setAttribute('aria-expanded','true'); activeTermNote={trigger,panel};
+      panel.focus({preventScroll:true});
+      panel.scrollIntoView({block:'nearest',behavior:'auto'});
+    });
+    element.append(trigger);
+  }
+}
+function renderParagraphs(container, text, terms) {
+  container.replaceChildren();
+  for(const paragraph of text.split(/\n\s*\n/)) {
+    const copy=document.createElement('p'); container.append(copy);
+    annotate(copy,paragraph,terms);
+  }
+}
+document.addEventListener('keydown',event=>{
+  // A modal's native cancel event handles Escape without closing the review too.
+  if(event.key==='Escape' && activeTermNote && !$('review-dialog').open) {
+    event.preventDefault(); closeTermNote();
+  }
+});
 function renderFeed(feed) {
   const info=feedInfo(feed);
   $('feed-meta').hidden=false;
@@ -38,6 +95,8 @@ function updateGuide(phase='preview',reaction=null) {
   }
 }
 function render() {
+  closeTermNote(false);
+  $('card').querySelectorAll('.term-note').forEach(panel=>panel.remove());
   revealed = false;
   document.body.classList.remove('has-reading-actions');
   const count = state.completed.length;
@@ -76,10 +135,11 @@ function render() {
   }
   const card = state.cards.find(c => c.id === state.queue[0]);
   $('category').textContent=card.category;
-  $('question').textContent=card.question;
+  const terms=termsForCard(card);
+  annotate($('question'),card.question,terms);
   $('attribution').hidden=!card.actor;
   $('attribution').textContent=card.actor ? `本篇提及 · ${card.actor}` : '';
-  $('answer-text').textContent=card.answer;
+  renderParagraphs($('answer-text'),card.answer,terms);
   $('answer').hidden=true;
   $('source').hidden=true;
   $('reveal').hidden=false;
@@ -111,7 +171,7 @@ function revealCard({focus=true}={}) {
 }
 $('reveal').addEventListener('click', revealCard);
 $('card').addEventListener('click', (event) => {
-  if (!event.target.closest('a, button')) revealCard();
+  if (!event.target.closest('a, button, .term-note')) revealCard();
 });
 function respond(remembered) {
   if(!revealed || advancing) return;
@@ -140,6 +200,7 @@ $('remember').addEventListener('click',()=>respond(true));
 
 function openReview() {
   if(!state?.completed.length) return;
+  closeTermNote(false);
   $('review-title').textContent=`今日已讀 · ${state.completed.length}`;
   $('review-list').replaceChildren(...completedCards(state).map((card,index)=>{
     const item=document.createElement('details');
@@ -147,8 +208,19 @@ function openReview() {
     const title=document.createElement('summary'); title.textContent=card.question;
     const meta=document.createElement('p'); meta.className='attribution';
     meta.textContent=[card.category,card.actor || card.sourceName].filter(Boolean).join(' · ');
-    const copy=document.createElement('p'); copy.className='review-copy'; copy.textContent=card.answer;
+    const terms=termsForCard(card);
+    const copy=document.createElement('div'); copy.className='review-copy';
     item.append(title,meta,copy);
+    renderParagraphs(copy,card.answer,terms);
+    // Keep interactive buttons out of the native summary toggle.
+    const titleOnly=terms.filter(note=>!termSegments(card.answer,[note]).some(segment=>segment.note));
+    if(titleOnly.length) {
+      const labels=document.createElement('p'); labels.className='review-terms';
+      copy.before(labels); annotate(labels,'標題術語 · '+titleOnly.map(note=>note.term).join(' · '),titleOnly);
+    }
+    item.addEventListener('toggle',()=>{
+      if(!item.open && activeTermNote && item.contains(activeTermNote.trigger)) closeTermNote(false);
+    });
     const url=safeSource(card.sourceUrl);
     if(url) {
       const source=document.createElement('a'); source.className='source'; source.href=url;
@@ -161,7 +233,11 @@ function openReview() {
   $('review-dialog').showModal();
 }
 $('review-open').addEventListener('click',openReview);
-$('review-close').addEventListener('click',()=>$('review-dialog').close());
+$('review-close').addEventListener('click',()=>{ closeTermNote(false); $('review-dialog').close(); });
+$('review-dialog').addEventListener('cancel',event=>{
+  if(activeTermNote) { event.preventDefault(); closeTermNote(); }
+});
+$('review-dialog').addEventListener('close',()=>closeTermNote(false));
 
 async function start() {
   today = dayKey();

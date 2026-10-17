@@ -132,7 +132,7 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(context['targetSourceIndexes'],[0])
         self.assertEqual(len(context['articles']),1)
         self.assertEqual(context['acceptedCardCount'],4)
-        self.assertEqual(repair['max_tokens'],1200)
+        self.assertEqual(repair['max_tokens'],1600)
         self.assertEqual(cards[1:],updater.validate_cards(valid,sources,[])[1:])
         self.assertEqual(call.call_count,2)
 
@@ -430,6 +430,63 @@ class FeedTests(unittest.TestCase):
         self.assertIn('這不是論文摘要或學術課堂',system)
         self.assertIn('原型、試點與已部署產品必須區分',system)
         self.assertIn('不能為了接地氣編造',system)
+        self.assertIn('不寫進標題或正文',system)
+        self.assertIn('用途與變化，不堆縮寫',system)
+        self.assertIn('不猜測縮寫全稱',system)
+        self.assertIn('"terms":[]',system)
+        self.assertNotIn('並順手解釋',system)
+
+    def test_terms_are_saved_separately_without_changing_the_answer(self):
+        sources, raw=self.fixture()
+        draft=raw['cards'][0]
+        draft['terms']=[{'term':'模型','definition':'本篇用來處理資料、產生結果的運算系統。'}]
+        result=updater.validate_one(draft,sources[0],[])
+        self.assertEqual(result['terms'],draft['terms'])
+        self.assertEqual(result['answer'],draft['answer'])
+        self.assertNotIn(draft['terms'][0]['definition'],result['answer'])
+        changed={**draft,'terms':[{'term':'模型','definition':'本篇用來處理資料的運算系統；這是測試注釋。'}]}
+        self.assertNotEqual(result['id'],updater.validate_one(changed,sources[0],[])['id'])
+
+    def test_bad_optional_terms_do_not_reject_good_cards(self):
+        sources, raw=self.fixture()
+        for terms in [None,{},42,'bad',[None,{},42],
+                      [{'term':'模型','definition':'太短'}],
+                      [{'term':'模型','definition':'中'*121}],
+                      [{'term':'模型','definition':'請看 https://example.com/相關解釋'}],
+                      [{'term':'不在正文','definition':'這是不應展示在介面中的測試注釋。'}],
+                      [{'term':'模型','definition':'An English-only definition.'}]]:
+            with self.subTest(terms=terms):
+                card=updater.validate_one({**raw['cards'][0],'terms':terms},sources[0],[])
+                self.assertEqual(card['terms'],[])
+
+    def test_terms_normalization_deduplication_and_three_note_limit(self):
+        definition='這是測試用的短注釋，不代表真實新聞內容。'
+        card={'question':'模型 架構 效率 資源 MIT', 'terms':[
+            {'term':term,'definition':' '+definition+'\n'} for term in [' 模型 ','模型','MIT','mit','架構','效率']]}
+        self.assertEqual(updater.card_terms(card),[
+            {'term':term,'definition':definition} for term in ['模型','MIT','架構']])
+
+    def test_term_matching_uses_literal_text_and_ascii_boundaries(self):
+        definition='這是測試用的短注釋，不代表真實新聞內容。'
+        terms=[{'term':term,'definition':definition} for term in ['AI','VLA','a(b)','C++']]
+        self.assertEqual(updater.card_terms({'question':'chair NVLA', 'terms':terms}),[])
+        matched=updater.card_terms({'question':'AI的用途 a(b) C++', 'terms':terms})
+        self.assertEqual([term['term'] for term in matched],['AI','a(b)','C++'])
+
+    def test_structured_paragraph_notes_are_available_in_bounded_repair_context(self):
+        draft={'paragraphs':['模型的用途。','觀察。','限制。'], 'terms':[
+            {'term':'模型','definition':'這是測試用的短注釋，不代表真實新聞。'}]}
+        self.assertEqual(updater.feedback_draft(draft)['terms'],draft['terms'])
+
+    def test_notes_use_the_same_generation_call_with_a_bounded_output_budget(self):
+        sources, raw=self.fixture()
+        for card in raw['cards']:
+            card['terms']=[{'term':'模型','definition':'本篇用來處理資料、產生結果的運算系統。'}]
+        with patch.object(updater,'api_open',return_value=self.completion(raw)) as call:
+            generated=updater.generate(sources,[],'test-key')
+        self.assertEqual(call.call_count,1)
+        self.assertEqual(json.loads(call.call_args.args[0].data)['max_tokens'],8000)
+        self.assertTrue(all(len(card['terms'])==1 for card in generated))
 
     def test_repair_replacements_use_editorial_order_not_feed_input_order(self):
         sources, valid=self.fixture()

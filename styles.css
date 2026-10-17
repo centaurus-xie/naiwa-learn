@@ -67,7 +67,18 @@ h2 { font-size:25px; line-height:1.65; font-weight:600; margin:14px 0 28px; lett
 .reveal:hover { color:var(--green); }
 .reveal>span:last-child { font-size:20px; }
 .reveal:disabled { cursor:wait; }
-#answer-text { font-size:16px; line-height:1.95; color:#46513f; margin:0 0 22px; white-space:pre-line; overflow-wrap:anywhere; }
+#answer-text { font-size:16px; line-height:1.95; color:#46513f; margin:0 0 22px; overflow-wrap:anywhere; }
+#answer-text>p,.review-copy>p { margin:0 0 1em; white-space:pre-line; }
+#answer-text>p:last-child,.review-copy>p:last-child { margin-bottom:0; }
+.term-trigger { display:inline; border:0; padding:0; background:none; color:inherit; font:inherit; letter-spacing:inherit; line-height:inherit; text-align:inherit; text-decoration:underline dotted #73866b; text-underline-offset:4px; text-decoration-thickness:1px; border-radius:2px; }
+.term-trigger:hover,.term-trigger[aria-expanded="true"] { color:var(--green); text-decoration-style:solid; background:#eff2e9; }
+.term-note { position:relative; background:#f4f6ef; border-left:2px solid #8eaa7d; border-radius:0 10px 10px 0; padding:13px 46px 13px 15px; margin:0 0 20px; color:#46513f; font-size:14px; line-height:1.8; letter-spacing:normal; overflow-wrap:anywhere; scroll-margin:12px; }
+.term-note:focus { outline:2px solid #789669; outline-offset:3px; }
+.term-note strong { display:block; font-size:12px; font-weight:600; color:var(--green); }
+.term-note p { margin:5px 0 0; }
+.term-close { position:absolute; top:2px; right:2px; width:40px; height:40px; border:0; background:none; color:#5f6d54; font-size:22px; border-radius:8px; }
+.term-close:hover { background:#e7ecdf; }
+.review-terms { font-size:13px; line-height:1.8; color:#5f6d54; margin:0 0 14px; }
 .card.is-revealed .card-content { padding-top:24px; }
 .card.is-revealed h2 { font-size:22px; margin-bottom:16px; }
 .attribution { font-size:12px; line-height:1.8; color:#5f6d54; margin:-12px 0 20px; overflow-wrap:anywhere; }
@@ -120,7 +131,7 @@ footer>span:last-child span { font-size:17px; margin-left:10px; }
 .review-item { border:1px solid #e2e6d9; border-radius:16px; background:white; margin-top:12px; padding:18px 20px; }
 .review-item summary { cursor:pointer; font-size:16px; font-weight:500; line-height:1.75; overflow-wrap:anywhere; }
 .review-item .attribution { margin:13px 0 10px; }
-.review-copy { font-size:16px; line-height:1.95; color:#46513f; white-space:pre-line; overflow-wrap:anywhere; margin:0 0 18px; }
+.review-copy { font-size:16px; line-height:1.95; color:#46513f; overflow-wrap:anywhere; margin:0 0 18px; }
 
 @media(min-width:1400px) {
   main { margin-top:70px; margin-bottom:90px; }

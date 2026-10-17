@@ -2,7 +2,7 @@
 
 Run from the repository root: python3 tests/browser_server.py
 Use /?fault=healthy, invalid-json, incomplete, unavailable, new-edition,
-bad-date, timezone, reading, guide, guide-failed.
+bad-date, timezone, reading, guide, guide-failed, terms.
 This server only changes its own in-memory response; repository data stays intact.
 """
 import json
@@ -26,7 +26,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.fault = parse_qs(referrer.query).get('fault', ['healthy'])[0]
         status = 200
         data = json.loads((ROOT / 'data/cards.json').read_text(encoding='utf-8'))
-        if self.fault in {'reading', 'guide', 'guide-failed'}:
+        if self.fault in {'reading', 'guide', 'guide-failed', 'terms'}:
             # Explicitly synthetic, long-form fixture for mobile layout checks.
             # Never published or mixed into the real feed.
             answer = ('這是一張本機介面測試卡，不是真實新聞。這個段落用來確認手機上較長的中文內容是否清楚易讀，'
@@ -40,7 +40,16 @@ class Handler(SimpleHTTPRequestHandler):
                  'question':f'第{i+1}張預覽：長標題與三段導讀，在手機上也能輕鬆閱讀，不必反覆點開',
                  'answer':answer,'sourceName':'本機介面測試 · 非真實新聞','sourceUrl':'https://example.com/',
                  'newsTitle':'Long-source-title-preview: 較長的原文標題會自然換行，而不是擠出畫面'} for i in range(5)]}
-            if self.fault != 'reading':
+            if self.fault == 'terms':
+                data['editionId']='browser-terms-preview-v1'
+                for card in data['cards']:
+                    card.update({'question':'本機注釋預覽：術語甲與標題詞，不是真實新聞',
+                                 'answer':answer.replace('這個段落','術語甲所在的這個段落',1).replace('第二段測試','術語乙出現在第二段測試',1),
+                                 'terms':[
+                                     {'term':'術語甲','definition':'這是虛構的測試詞，只用來檢查點擊注釋、關閉與正文留白。'},
+                                     {'term':'術語乙','definition':'這也是虛構的測試詞，用來檢查切換注釋時只展開一條。'},
+                                     {'term':'標題詞','definition':'這個虛構詞只出現在標題，用來檢查已讀回看內的注釋入口。'}]})
+            elif self.fault != 'reading':
                 data.update({'editionId':'browser-guide-preview-'+self.fault,
                              'generatedAt':'2026-10-16T00:17:00Z','checkedAt':'2026-10-16T00:18:00Z',
                              'status':'updated'})

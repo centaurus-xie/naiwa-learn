@@ -57,6 +57,20 @@ class BrowserPreviewTests(unittest.TestCase):
         self.assertEqual(data['generationAttempts'], 6)
         self.assertIn('這不是實際生成結果', data['updateReason'])
 
+    def test_term_fixture_has_separate_synthetic_notes_and_a_title_only_term(self):
+        body, status=self.response('terms')
+        data=json.loads(body)
+        self.assertEqual(status,200)
+        self.assertEqual(len(data['cards']),5)
+        for card in data['cards']:
+            self.assertEqual(len(card['terms']),3)
+            self.assertIn('不是真實新聞',card['answer'])
+            self.assertIn('標題詞',card['question'])
+            self.assertNotIn('標題詞',card['answer'])
+            for term in card['terms']:
+                self.assertNotIn(term['definition'],card['answer'])
+                self.assertIn('虛構',term['definition'])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -8,6 +8,43 @@ export function validCards(cards) {
       && ['sourceUrl','sourceName','publishedAt','newsTitle','evidence','actor'].every(k=>c[k]===undefined || typeof c[k]==='string'));
 }
 
+function termPattern(term) {
+  const escaped=term.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  // An acronym must not turn part of an unrelated English word into a link.
+  return `${/^[a-z0-9_]/i.test(term) ? '(?<![a-z0-9_])' : ''}${escaped}${/[a-z0-9_]$/i.test(term) ? '(?![a-z0-9_])' : ''}`;
+}
+
+export function termsForCard(card) {
+  if(!Array.isArray(card?.terms)) return [];
+  const text=[card.question,card.answer].filter(value=>typeof value==='string').join('\n');
+  const notes=[], seen=new Set();
+  for(const entry of card.terms.slice(0,12)) {
+    if(typeof entry?.term!=='string' || typeof entry?.definition!=='string') continue;
+    const term=entry.term.replace(/\s+/g,' ').trim(), definition=entry.definition.replace(/\s+/g,' ').trim();
+    if(term.length<2 || term.length>40 || definition.length<12 || definition.length>120
+      || !/[\u4e00-\u9fff]/u.test(definition) || /[<>]|https?:\/\/|www\./i.test(term+' '+definition)
+      || seen.has(term.toLowerCase()) || !new RegExp(termPattern(term),'iu').test(text)) continue;
+    notes.push({term,definition}); seen.add(term.toLowerCase());
+    if(notes.length===3) break;
+  }
+  return notes;
+}
+
+export function termSegments(text, terms=[]) {
+  if(!terms.length) return [{text}];
+  // Match literal text only, with longer terms taking precedence over overlaps.
+  const sorted=[...terms].sort((a,b)=>b.term.length-a.term.length);
+  const pattern=new RegExp(sorted.map(note=>`(${termPattern(note.term)})`).join('|'),'giu');
+  const segments=[]; let end=0;
+  for(const match of text.matchAll(pattern)) {
+    if(match.index>end) segments.push({text:text.slice(end,match.index)});
+    segments.push({text:match[0],note:sorted[match.slice(1).findIndex(value=>value!==undefined)]});
+    end=match.index+match[0].length;
+  }
+  if(end<text.length) segments.push({text:text.slice(end)});
+  return segments.length ? segments : [{text}];
+}
+
 export function feedStatus(feed) {
   if(feed.offline===true) return '暫時無法取得新卡，繼續本機保存的卡片';
   const format=(value)=>{
@@ -102,14 +139,15 @@ export function completionMessage(cards) {
 export function createSession(cards, day, saved, editionId = null) {
   if(!validCards(cards)) throw new Error('Expected five complete, unique cards');
   // Legacy data without an edition ID still changes when its card content changes.
-  const version=typeof editionId==='string' && editionId ? editionId : JSON.stringify(cards.map(c=>[c.id,c.question,c.answer]));
+  const version=typeof editionId==='string' && editionId ? editionId : JSON.stringify(cards.map(c=>[c.id,c.question,c.answer,termsForCard(c)]));
   if(saved?.day===day && saved.editionId===version && validCards(saved.cards)
-    && saved.cards.every((c,i)=>c.id===cards[i].id && c.question===cards[i].question && c.answer===cards[i].answer)
+    && saved.cards.every((c,i)=>c.id===cards[i].id && c.question===cards[i].question && c.answer===cards[i].answer
+      && JSON.stringify(termsForCard(c))===JSON.stringify(termsForCard(cards[i])))
     && Array.isArray(saved.queue) && Array.isArray(saved.completed) && saved.total===5
     && new Set([...saved.queue,...saved.completed]).size===5
     && saved.queue.length+saved.completed.length===5
     && [...saved.queue,...saved.completed].every(id=>cards.some(c=>c.id===id))) {
-    return {...saved,readingStarted:saved.readingStarted===true || saved.completed.length>0};
+    return {...saved,cards,readingStarted:saved.readingStarted===true || saved.completed.length>0};
   }
   return {day,editionId:version,cards,queue:cards.map(c=>c.id),completed:[],total:5,readingStarted:false};
 }
