@@ -6,6 +6,10 @@
       "category": "模型運作",
       "question": "模型「訓練」和「推論」，差別在哪？",
       "answer": "訓練是用資料調整模型的參數；推論是使用訓練好的模型處理新輸入。你輸入一句問題、等待回答，通常就是在使用推論，而不是重新訓練模型。",
+      "translations": {
+        "zh-Hans": {"category":"模型运作","question":"模型“训练”和“推理”，差别在哪？","answer":"训练是用数据调整模型的参数；推理是使用训练好的模型处理新输入。你输入一句问题、等待回答，通常就是在使用推理，而不是重新训练模型。","terms":[]},
+        "en": {"category":"How models work","question":"How do model training and inference differ?","answer":"Training adjusts a model’s parameters using data. Inference uses a trained model to process new input. When you enter a question and wait for a response, you are usually using inference, not training the model again.","terms":[]}
+      },
       "sourceName": "allenai · Hugging Face",
       "sourceUrl": "https://huggingface.co/blog/allenai/impactful-scheduling",
       "newsTitle": "Impactful scheduling for GPU clusters",
@@ -16,6 +20,10 @@
       "category": "多模態",
       "question": "模型能看圖片，就叫「多模態」嗎？",
       "answer": "多模態指模型能處理或連結多種資料形式，例如文字、圖片、聲音。能根據圖片回答文字問題，就是一個例子；但不代表它能處理所有形式。",
+      "translations": {
+        "zh-Hans": {"category":"多模态","question":"模型能看图片，就叫“多模态”吗？","answer":"多模态指模型能处理或连接多种数据形式，例如文字、图片、声音。能根据图片回答文字问题，就是一个例子；但不代表它能处理所有形式。","terms":[]},
+        "en": {"category":"Multimodal AI","question":"Does understanding images make a model multimodal?","answer":"Multimodal models can process or connect multiple forms of data, such as text, images, and audio. Answering a written question about an image is one example, but that does not mean the model can handle every form of data.","terms":[]}
+      },
       "sourceName": "LiquidAI · Hugging Face",
       "sourceUrl": "https://huggingface.co/blog/LiquidAI/open-d1",
       "newsTitle": "Multimodal open d1 decision models for the edge",
@@ -26,6 +34,10 @@
       "category": "語音 AI",
       "question": "語音辨識和語音合成，是同一件事嗎？",
       "answer": "方向相反。語音辨識（ASR）把聲音轉成文字；語音合成（TTS）把文字轉成聲音。語音助手可能把這兩個能力串起來，但它們是不同任務。",
+      "translations": {
+        "zh-Hans": {"category":"语音 AI","question":"语音识别和语音合成，是同一件事吗？","answer":"方向相反。语音识别（ASR）把声音转成文字；语音合成（TTS）把文字转成声音。语音助手可能把这两个能力串起来，但它们是不同任务。","terms":[]},
+        "en": {"category":"Voice AI","question":"Are speech recognition and speech synthesis the same task?","answer":"They work in opposite directions. Speech recognition (ASR) turns audio into text; speech synthesis (TTS) turns text into audio. A voice assistant may connect both capabilities, but they are different tasks.","terms":[]}
+      },
       "sourceName": "tiiuae · Hugging Face",
       "sourceUrl": "https://huggingface.co/blog/tiiuae/falcon-asr",
       "newsTitle": "Introducing Falcon ASR",
@@ -36,6 +48,10 @@
       "category": "模型訓練",
       "question": "「微調」需要把模型從頭訓練一次嗎？",
       "answer": "不用。微調是在已訓練好的模型上，使用特定任務或領域的資料繼續訓練，讓它更適合某種工作。資料品質與測試方式，往往比單純增加資料量更重要。",
+      "translations": {
+        "zh-Hans": {"category":"模型训练","question":"“微调”需要把模型从头训练一次吗？","answer":"不用。微调是在已训练好的模型上，使用特定任务或领域的数据继续训练，让它更适合某种工作。数据质量与测试方式，往往比单纯增加数据量更重要。","terms":[]},
+        "en": {"category":"Model training","question":"Does fine-tuning mean training a model from scratch?","answer":"No. Fine-tuning continues training an existing model with data from a particular task or domain, making it better suited to that kind of work. Data quality and evaluation often matter more than simply adding more data.","terms":[]}
+      },
       "sourceName": "nvidia · Hugging Face",
       "sourceUrl": "https://huggingface.co/blog/nvidia/nemotron-ioi-and-imo-2026",
       "newsTitle": "One Model Family, Two Gold-Level Results: Fine-Tuning Nemotron for IOI and IMO",
@@ -46,6 +62,10 @@
       "category": "AI Agent",
       "question": "AI Agent，和一般聊天機器人有什麼不同？",
       "answer": "一般聊天機器人主要回覆問題；Agent 還會圍繞目標規劃步驟、使用工具，並依結果調整下一步。它仍可能犯錯，重要操作需要人來確認。",
+      "translations": {
+        "zh-Hans": {"category":"AI 智能体","question":"AI Agent，和一般聊天机器人有什么不同？","answer":"一般聊天机器人主要回复问题；Agent 还会围绕目标规划步骤、使用工具，并依结果调整下一步。它仍可能犯错，重要操作需要人来确认。","terms":[]},
+        "en": {"category":"AI agents","question":"How does an AI agent differ from a regular chatbot?","answer":"A regular chatbot mainly responds to questions. An agent can also plan steps toward a goal, use tools, and adjust its next step based on the results. It can still make mistakes, so important actions need human confirmation.","terms":[]}
+      },
       "sourceName": "microsoft · Hugging Face",
       "sourceUrl": "https://huggingface.co/blog/microsoft/thinkingbox",
       "newsTitle": "The Agent Said It Was Done. The Database Disagreed.",

@@ -1,3 +1,5 @@
+import {languageOf,localeOf,t} from './i18n.js?v=20261018-1';
+
 export function dayKey(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Hong_Kong',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
 }
@@ -14,15 +16,16 @@ function termPattern(term) {
   return `${/^[a-z0-9_]/i.test(term) ? '(?<![a-z0-9_])' : ''}${escaped}${/[a-z0-9_]$/i.test(term) ? '(?![a-z0-9_])' : ''}`;
 }
 
-export function termsForCard(card) {
+export function termsForCard(card,language='zh-Hant') {
   if(!Array.isArray(card?.terms)) return [];
   const text=[card.question,card.answer].filter(value=>typeof value==='string').join('\n');
   const notes=[], seen=new Set();
   for(const entry of card.terms.slice(0,12)) {
     if(typeof entry?.term!=='string' || typeof entry?.definition!=='string') continue;
     const term=entry.term.replace(/\s+/g,' ').trim(), definition=entry.definition.replace(/\s+/g,' ').trim();
-    if(term.length<2 || term.length>40 || definition.length<12 || definition.length>120
-      || !/[\u4e00-\u9fff]/u.test(definition) || /[<>]|https?:\/\/|www\./i.test(term+' '+definition)
+    const english=languageOf(language)==='en';
+    if(term.length<2 || term.length>(english ? 80 : 40) || definition.length<12 || definition.length>(english ? 280 : 120)
+      || !(english ? /[a-z]/i : /[\u4e00-\u9fff]/u).test(definition) || /[<>]|https?:\/\/|www\./i.test(term+' '+definition)
       || seen.has(term.toLowerCase()) || !new RegExp(termPattern(term),'iu').test(text)) continue;
     notes.push({term,definition}); seen.add(term.toLowerCase());
     if(notes.length===3) break;
@@ -45,57 +48,51 @@ export function termSegments(text, terms=[]) {
   return segments.length ? segments : [{text}];
 }
 
-export function feedStatus(feed) {
-  if(feed.offline===true) return '暫時無法取得新卡，繼續本機保存的卡片';
+export function feedStatus(feed,language='zh-Hant') {
+  const say=(key,values)=>t(language,key,values);
+  if(feed.offline===true) return say('feedOffline');
   const format=(value)=>{
     if(typeof value!=='string') return null;
     const date=new Date(value);
-    return Number.isNaN(date.getTime()) ? null : new Intl.DateTimeFormat('zh-Hant',{timeZone:'Asia/Hong_Kong',hourCycle:'h23',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}).format(date);
+    return Number.isNaN(date.getTime()) ? null : new Intl.DateTimeFormat(localeOf(language),{timeZone:'Asia/Hong_Kong',hourCycle:'h23',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}).format(date);
   };
   const published=format(feed.generatedAt), checked=format(feed.checkedAt);
-  let label=published ? `新卡發布 ${published} · AI 整理，請參照原文` : feed.mode==='llm' ? '卡片發布時間待確認 · AI 整理，請參照原文' : '基礎概念卡 · 尚未生成 AI 新卡';
-  if(checked) label+=` ｜ 檢查 ${checked}`;
-  if(published || checked) label+=' · 香港時間（UTC+8）';
-  const states={
-    'no-new-articles':'暫無新文章',
-    'already-generated-today':'今日卡片已備妥',
-    'update-failed':'更新未成功，保留原卡',
-    'content-retained':'本次更新未完成，顯示的是先前版本',
-    'generation-failed':'新卡生成失敗，請查看更新原因',
-    'selection-unavailable':'可讀來源或題材不足，尚未發布新卡'
-  };
-  if(typeof feed.status==='string' && Object.hasOwn(states,feed.status)) label+=' · '+states[feed.status];
-  if(feed.status==='generation-failed' && Number.isInteger(feed.generationAttempts) && feed.generationAttempts>0) label+=`（已嘗試 ${feed.generationAttempts} 次）`;
-  if(['generation-failed','selection-unavailable','update-failed'].includes(feed.status) && typeof feed.updateReason==='string') label+=' · '+feed.updateReason.slice(0,260);
+  let label=published ? say('feedPublished',{date:published}) : say(feed.mode==='llm' ? 'feedUnknown' : 'feedSeed');
+  if(checked) label+=' ｜ '+say('checked',{date:checked});
+  if(published || checked) label+=' · '+say('timezone');
+  if(['no-new-articles','already-generated-today','update-failed','content-retained','generation-failed','selection-unavailable'].includes(feed.status)) label+=' · '+say('status.'+feed.status);
+  if(feed.status==='generation-failed' && Number.isInteger(feed.generationAttempts) && feed.generationAttempts>0) label+=say('attempts',{count:feed.generationAttempts});
+  if(['generation-failed','selection-unavailable','update-failed'].includes(feed.status) && typeof feed.updateReason==='string') label+=' · '+say('diagnostic',{reason:feed.updateReason.slice(0,260)});
   return label;
 }
 
-export function feedInfo(feed, now = new Date()) {
+export function feedInfo(feed, now = new Date(), language='zh-Hant') {
+  const say=(key,values)=>t(language,key,values);
   const data=feed && typeof feed==='object' && !Array.isArray(feed) ? feed : {};
   const offline=data.offline===true;
   const date=typeof data.generatedAt==='string' ? new Date(data.generatedAt) : null;
   const future=date && date.getTime()>now.getTime()+300000;
   const published=date && !Number.isNaN(date.getTime()) && !future ? date : null;
   const today=published && dayKey(published)===dayKey(now);
-  const stamp=published ? new Intl.DateTimeFormat('zh-Hant',{timeZone:'Asia/Hong_Kong',month:'long',day:'numeric'}).format(published) : null;
+  const stamp=published ? new Intl.DateTimeFormat(localeOf(language),{timeZone:'Asia/Hong_Kong',month:'long',day:'numeric'}).format(published) : null;
   const failed=['update-failed','content-retained','generation-failed','selection-unavailable'].includes(data.status);
   const unknownDate=data.mode==='llm' && !published;
-  let summary=stamp ? `${stamp}更新 · 香港時間 · AI 整理` : '基礎概念卡 · 尚無 AI 新卡';
-  let details=feedStatus(data);
-  if(data.status==='already-generated-today' && !today) details=feedStatus({...data,status:'updated'});
+  let summary=stamp ? say('updated',{date:stamp}) : say('seedSummary');
+  let details=feedStatus(data,language);
+  if(data.status==='already-generated-today' && !today) details=feedStatus({...data,status:'updated'},language);
   if(future) {
-    summary='發布時間待確認 · AI 整理';
-    details='發布時間晚於目前時間，暫不將它視為已發布的新卡。'+(typeof data.updateReason==='string' ? ' '+data.updateReason.slice(0,260) : '');
-  } else if(data.mode==='llm' && !published) summary='發布時間待確認 · AI 整理';
-  if(data.status==='no-new-articles') summary=stamp ? `暫無新卡 · 顯示${stamp}內容` : '暫無新卡 · 基礎概念卡';
-  if(failed) summary=today ? '今日卡片可讀 · 本次更新未完成' : `今天尚未更新 · ${stamp ? `顯示${stamp}內容` : '暫用先前卡片'}`;
+    summary=say('unknownSummary');
+    details=say('futureDetails')+(typeof data.updateReason==='string' ? ' '+say('diagnostic',{reason:data.updateReason.slice(0,260)}) : '');
+  } else if(data.mode==='llm' && !published) summary=say('unknownSummary');
+  if(data.status==='no-new-articles') summary=stamp ? say('noNew',{date:stamp}) : say('noNewSeed');
+  if(failed) summary=today ? say('failedToday') : stamp ? say('failedOld',{date:stamp}) : say('failedNoDate');
   if(offline) {
     const cached=validCards(data.cards);
-    summary=cached ? '暫時無法更新 · 使用本機卡片' : '暫時無法取得卡片';
-    if(!cached) details='請檢查網路後重新整理；目前沒有可用的本機卡片。';
+    summary=say(cached ? 'offlineCached' : 'offlineEmpty');
+    if(!cached) details=say('offlineDetails');
   }
   return {summary,details,tone:failed || offline || future || unknownDate ? 'warning' : 'neutral',
-    detailLabel:failed || offline || future || unknownDate ? '查看更新原因' : '更新詳情'};
+    detailLabel:say(failed || offline || future || unknownDate ? 'updateReason' : 'updateDetails')};
 }
 
 // Curated questions guide attention, never invent facts about the article.
@@ -126,14 +123,14 @@ export function guideTopic(card) {
   return GUIDE_TOPICS.find(topic=>topic.match.test(text)) || DEFAULT_GUIDE;
 }
 
-export function guideMessage(card, phase='preview') {
+export function guideMessage(card, phase='preview', language='zh-Hant') {
   const topic=guideTopic(card);
-  return phase==='reading' ? topic.reading : topic.preview;
+  return t(language,`guide.${topic.key}.${phase==='reading' ? 'reading' : 'preview'}`);
 }
 
-export function completionMessage(cards) {
-  const topics=[...new Set(cards.map(card=>guideTopic(card)).filter(topic=>topic.key!=='discovery').map(topic=>topic.label))];
-  return topics.length>=2 ? `今天逛了${topics[0]}與${topics[1]}，明天再看。` : '今天的新發現，讓它慢慢沉澱。';
+export function completionMessage(cards,language='zh-Hant') {
+  const topics=[...new Set(cards.map(card=>guideTopic(card).key).filter(key=>key!=='discovery'))];
+  return topics.length>=2 ? t(language,'completion',{first:t(language,'topic.'+topics[0]),second:t(language,'topic.'+topics[1])}) : t(language,'completionDefault');
 }
 
 export function createSession(cards, day, saved, editionId = null) {

@@ -2,7 +2,7 @@
 
 Run from the repository root: python3 tests/browser_server.py
 Use /?fault=healthy, invalid-json, incomplete, unavailable, new-edition,
-bad-date, timezone, reading, guide, guide-failed, terms.
+bad-date, timezone, reading, guide, guide-failed, terms, i18n.
 This server only changes its own in-memory response; repository data stays intact.
 """
 import json
@@ -26,7 +26,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.fault = parse_qs(referrer.query).get('fault', ['healthy'])[0]
         status = 200
         data = json.loads((ROOT / 'data/cards.json').read_text(encoding='utf-8'))
-        if self.fault in {'reading', 'guide', 'guide-failed', 'terms'}:
+        if self.fault in {'reading', 'guide', 'guide-failed', 'terms', 'i18n'}:
             # Explicitly synthetic, long-form fixture for mobile layout checks.
             # Never published or mixed into the real feed.
             answer = ('這是一張本機介面測試卡，不是真實新聞。這個段落用來確認手機上較長的中文內容是否清楚易讀，'
@@ -40,8 +40,8 @@ class Handler(SimpleHTTPRequestHandler):
                  'question':f'第{i+1}張預覽：長標題與三段導讀，在手機上也能輕鬆閱讀，不必反覆點開',
                  'answer':answer,'sourceName':'本機介面測試 · 非真實新聞','sourceUrl':'https://example.com/',
                  'newsTitle':'Long-source-title-preview: 較長的原文標題會自然換行，而不是擠出畫面'} for i in range(5)]}
-            if self.fault == 'terms':
-                data['editionId']='browser-terms-preview-v1'
+            if self.fault in {'terms','i18n'}:
+                data['editionId']='browser-'+self.fault+'-preview-v1'
                 for card in data['cards']:
                     card.update({'question':'本機注釋預覽：術語甲與標題詞，不是真實新聞',
                                  'answer':answer.replace('這個段落','術語甲所在的這個段落',1).replace('第二段測試','術語乙出現在第二段測試',1),
@@ -49,6 +49,18 @@ class Handler(SimpleHTTPRequestHandler):
                                      {'term':'術語甲','definition':'這是虛構的測試詞，只用來檢查點擊注釋、關閉與正文留白。'},
                                      {'term':'術語乙','definition':'這也是虛構的測試詞，用來檢查切換注釋時只展開一條。'},
                                      {'term':'標題詞','definition':'這個虛構詞只出現在標題，用來檢查已讀回看內的注釋入口。'}]})
+                    if self.fault == 'i18n':
+                        card['translations']={
+                            'zh-Hans':{'category':'界面预览','question':'本机注释预览：术语甲与标题词，不是真实新闻',
+                                       'answer':'本機排版測試：这是一张本机界面测试卡，不是真实新闻。术语甲是虚构词，用来检查正文、注释和阅读间距。\n\n术语乙也只用于界面测试。切换语言不应改变阅读顺序、已读数量或当前卡片。\n\n最后一段用于检查手机底部安全距离。内容不代表真实研究结果、产品功能或建议。',
+                                       'terms':[{'term':'术语甲','definition':'这是虚构的测试词，用来检查简体中文注释的展开与关闭。'},
+                                                {'term':'术语乙','definition':'这也是虚构的测试词，用来确认切换注释只展开一条。'},
+                                                {'term':'标题词','definition':'这个虚构词只在标题出现，用来检查已读回看的注释入口。'}]},
+                            'en':{'category':'Interface preview','question':'Local preview: Sample term and Title term — not real news',
+                                  'answer':'本機排版測試: this is a local interface test, not real news. Sample term is fictional and helps us check paragraph spacing and notes.\n\nSecond term is fictional too. Switching languages must not change the reading order, the read count, or the current card.\n\nThis final paragraph checks the safe space above the bottom buttons. Nothing here describes a real research result, product capability, or recommendation.',
+                                  'terms':[{'term':'Sample term','definition':'A fictional term used only to test the appearance and dismissal of this English note.'},
+                                           {'term':'Second term','definition':'Another fictional term, used to check that only one note stays open at a time.'},
+                                           {'term':'Title term','definition':'This fictional term appears only in the heading, to test notes in the read-today view.'}]}}
             elif self.fault != 'reading':
                 data.update({'editionId':'browser-guide-preview-'+self.fault,
                              'generatedAt':'2026-10-16T00:17:00Z','checkedAt':'2026-10-16T00:18:00Z',

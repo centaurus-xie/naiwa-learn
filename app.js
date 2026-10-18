@@ -1,16 +1,50 @@
-import { createSession, advance, dayKey, validCards, feedInfo, completedCards, startReading, guideMessage, completionMessage, termsForCard, termSegments } from './learning.js?v=20261017-1';
+import { createSession, advance, dayKey, validCards, feedInfo, completedCards, startReading, guideMessage, completionMessage, termsForCard, termSegments } from './learning.js?v=20261018-1';
+import {LANGUAGE_KEY,languageOf,localeOf,t,translatedCard} from './i18n.js?v=20261018-1';
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'naiwa-learning-v1';
 let state;
+let currentFeed;
+let loadError=null;
+let language='zh-Hant';
+try { language=languageOf(localStorage.getItem(LANGUAGE_KEY)); } catch { /* Preference storage is optional. */ }
+const say=(key,values)=>t(language,key,values);
 let revealed = false;
 let advancing = false;
 let activeTermNote = null;
 let noteSequence = 0;
 let today = dayKey();
 const cardTemplate = $('card').innerHTML;
-const date = new Intl.DateTimeFormat('zh-Hant', {timeZone:'Asia/Hong_Kong',month:'long', day:'numeric', weekday:'short'}).format(new Date());
-$('date-label').textContent = `${date} · DAILY DISCOVERY`;
+function localizeStatic(root) {
+  root.querySelectorAll('[data-i18n]').forEach(element=>element.textContent=say(element.dataset.i18n));
+  root.querySelectorAll('[data-i18n-label]').forEach(element=>element.setAttribute('aria-label',say(element.dataset.i18nLabel)));
+  root.querySelectorAll('[data-i18n-alt]').forEach(element=>element.alt=say(element.dataset.i18nAlt));
+}
+function applyLanguage() {
+  document.documentElement.lang=language;
+  document.title=say('brand')+' · AI Daily';
+  document.querySelector('meta[name="description"]').content=say('description');
+  localizeStatic(document);
+  document.querySelectorAll('[data-language]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.language===language)));
+  const date=new Intl.DateTimeFormat(localeOf(language),{timeZone:'Asia/Hong_Kong',month:'long',day:'numeric',weekday:'short'}).format(new Date());
+  $('date-label').textContent=`${date} · DAILY DISCOVERY`;
+}
+function renderPlaceholder() {
+  $('question').textContent=say(loadError==='unavailable' ? 'unavailableTitle' : loadError==='invalid' ? 'invalidTitle' : 'preparing');
+  $('hint').textContent=say(loadError==='unavailable' ? 'unavailableHint' : loadError==='invalid' ? 'invalidHint' : 'previewHint');
+  $('guide-message').textContent=say('hello');
+}
+document.querySelectorAll('[data-language]').forEach(button=>button.addEventListener('click',()=>{
+  const selected=languageOf(button.dataset.language);
+  if(selected===language) return;
+  language=selected;
+  try { localStorage.setItem(LANGUAGE_KEY,language); } catch { $('storage-notice').hidden=false; }
+  applyLanguage();
+  if(state) render({animate:false}); else renderPlaceholder();
+  if(currentFeed) renderFeed(currentFeed);
+}));
+applyLanguage();
+renderPlaceholder();
 
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); }
@@ -28,12 +62,13 @@ function closeTermNote(restoreFocus=true) {
   activeTermNote=null;
   if(restoreFocus && trigger.isConnected) trigger.focus({preventScroll:true});
 }
-function annotate(element, text, terms) {
+function annotate(element, text, terms, contentLanguage=language) {
   const segments=termSegments(text,terms);
   element.replaceChildren();
   if(!segments.some(segment=>segment.note)) { element.textContent=text; return; }
   const panel=document.createElement('aside');
   panel.className='term-note'; panel.id=`term-note-${++noteSequence}`;
+  panel.lang=contentLanguage;
   panel.hidden=true; panel.tabIndex=-1; panel.setAttribute('role','note');
   panel.setAttribute('aria-labelledby',`${panel.id}-title`);
   element.after(panel);
@@ -41,7 +76,7 @@ function annotate(element, text, terms) {
     if(!segment.note) { element.append(document.createTextNode(segment.text)); continue; }
     const trigger=document.createElement('button');
     trigger.type='button'; trigger.className='term-trigger'; trigger.textContent=segment.text;
-    trigger.setAttribute('aria-label',`${segment.text}：查看注釋`);
+    trigger.setAttribute('aria-label',say('termOpen',{term:segment.text}));
     trigger.setAttribute('aria-expanded','false'); trigger.setAttribute('aria-controls',panel.id);
     trigger.addEventListener('click',()=>{
       const same=activeTermNote?.trigger===trigger;
@@ -52,7 +87,7 @@ function annotate(element, text, terms) {
       const copy=document.createElement('p'); copy.textContent=segment.note.definition;
       const close=document.createElement('button');
       close.type='button'; close.className='term-close'; close.textContent='×';
-      close.setAttribute('aria-label',`關閉「${segment.note.term}」注釋`);
+      close.setAttribute('aria-label',say('termClose',{term:segment.note.term}));
       close.addEventListener('click',()=>closeTermNote());
       panel.replaceChildren(title,copy,close); panel.hidden=false;
       trigger.setAttribute('aria-expanded','true'); activeTermNote={trigger,panel};
@@ -66,7 +101,7 @@ function renderParagraphs(container, text, terms) {
   container.replaceChildren();
   for(const paragraph of text.split(/\n\s*\n/)) {
     const copy=document.createElement('p'); container.append(copy);
-    annotate(copy,paragraph,terms);
+    annotate(copy,paragraph,terms,container.lang || language);
   }
 }
 document.addEventListener('keydown',event=>{
@@ -76,7 +111,7 @@ document.addEventListener('keydown',event=>{
   }
 });
 function renderFeed(feed) {
-  const info=feedInfo(feed);
+  const info=feedInfo(feed,new Date(),language);
   $('feed-meta').hidden=false;
   $('feed-meta').dataset.tone=info.tone;
   $('feed-status').textContent=info.summary;
@@ -85,7 +120,7 @@ function renderFeed(feed) {
 }
 function updateGuide(phase='preview',reaction=null) {
   const card=state.cards.find(c=>c.id===state.queue[0]);
-  const message=state.queue.length ? guideMessage(card,phase) : completionMessage(completedCards(state));
+  const message=state.queue.length ? guideMessage(card,phase,language) : completionMessage(completedCards(state),language);
   if($('guide-message').textContent!==message) $('guide-message').textContent=message;
   const scene=$('guide-scene');
   scene.removeAttribute('data-reaction');
@@ -94,20 +129,20 @@ function updateGuide(phase='preview',reaction=null) {
     scene.dataset.reaction=reaction;
   }
 }
-function render() {
+function render({animate=true}={}) {
   closeTermNote(false);
   $('card').querySelectorAll('.term-note').forEach(panel=>panel.remove());
   revealed = false;
   document.body.classList.remove('has-reading-actions');
   const count = state.completed.length;
   $('review-entry').hidden=count===0;
-  $('review-open').textContent=`今日已讀 · ${count} ↗`;
+  $('review-open').textContent=say('reviewCount',{count})+' ↗';
   $('progress').replaceChildren(...Array.from({length:state.total}, (_, i) => {
     const dot = document.createElement('span');
     dot.className = i < count ? 'done' : i === count ? 'active' : '';
     return dot;
   }));
-  $('progress').setAttribute('aria-label', `已讀 ${count} 張，共 ${state.total} 張`);
+  $('progress').setAttribute('aria-label',say('progress',{count,total:state.total}));
   $('counter').replaceChildren(document.createTextNode(String(Math.min(count + 1, state.total)).padStart(2,'0') + ' '));
   const denominator = document.createElement('span');
   denominator.textContent = `/ ${String(state.total).padStart(2,'0')}`;
@@ -116,41 +151,46 @@ function render() {
   if (!$('question')) {
     $('card').innerHTML = cardTemplate;
     $('reveal').addEventListener('click', revealCard);
+    localizeStatic($('card'));
   }
-  $('session-label').textContent='今天的小發現';
+  $('session-label').textContent=say('session');
   $('card').classList.remove('is-revealed', 'entering', 'complete');
   void $('card').offsetWidth;
-  $('card').classList.add('entering');
+  if(animate) $('card').classList.add('entering');
   if (!state.queue.length) {
     $('card').classList.add('complete');
     $('card').replaceChildren();
     const spark = document.createElement('span'); spark.className='card-spark'; spark.textContent='✳'; spark.setAttribute('aria-hidden','true');
-    const heading = document.createElement('h2'); heading.textContent='今天完成了。'; heading.tabIndex=-1;
-    const copy = document.createElement('p'); copy.textContent='又多懂了一點點。\n好奇心，我們明天繼續。'; copy.style.whiteSpace='pre-line';
+    const heading = document.createElement('h2'); heading.textContent=say('doneTitle'); heading.tabIndex=-1;
+    const copy = document.createElement('p'); copy.textContent=say('doneCopy'); copy.style.whiteSpace='pre-line';
     $('card').append(spark, heading, copy);
     updateGuide();
-    $('session-label').textContent='今天的五個發現，都看過了';
-    $('hint').textContent='休息一下，讓新知慢慢發芽。';
+    $('session-label').textContent=say('doneSession');
+    $('hint').textContent=say('doneHint');
     return;
   }
-  const card = state.cards.find(c => c.id === state.queue[0]);
+  const display=translatedCard(state.cards.find(c=>c.id===state.queue[0]),language);
+  const card=display.card;
   $('category').textContent=card.category;
-  const terms=termsForCard(card);
-  annotate($('question'),card.question,terms);
+  const terms=termsForCard(card,display.language);
+  annotate($('question'),card.question,terms,display.language);
+  ['category','question','answer-text'].forEach(id=>$(id).lang=display.language);
+  $('translation-notice').hidden=!display.fallback;
+  $('translation-notice').textContent=say('translationMissing');
   $('attribution').hidden=!card.actor;
-  $('attribution').textContent=card.actor ? `本篇提及 · ${card.actor}` : '';
+  $('attribution').textContent=card.actor ? say('attribution',{actor:card.actor}) : '';
   renderParagraphs($('answer-text'),card.answer,terms);
   $('answer').hidden=true;
   $('source').hidden=true;
   $('reveal').hidden=false;
   $('reveal').disabled=false;
-  $('kicker').textContent='值得關注的新進展';
+  $('kicker').textContent=say('previewKicker');
   $('news-context').hidden=!card.newsTitle;
   $('news-title').textContent=card.newsTitle || '';
-  $('hint').textContent='看看發生了什麼，再想想它意味著什麼。';
+  $('hint').textContent=say('previewHint');
   const url=safeSource(card.sourceUrl);
   if(url) $('source').href=url; else $('source').removeAttribute('href');
-  $('source').textContent=`${card.sourceName || '閱讀來源'}${card.publishedAt ? ' · '+card.publishedAt.slice(0,10) : ''} ↗`;
+  $('source').textContent=`${card.sourceName || say('source')}${card.publishedAt ? ' · '+card.publishedAt.slice(0,10) : ''} ↗`;
   if(state.readingStarted) revealCard({focus:false});
   else updateGuide();
 }
@@ -164,9 +204,9 @@ function revealCard({focus=true}={}) {
   $('actions').hidden=false;
   document.body.classList.add('has-reading-actions');
   $('card').classList.add('is-revealed');
-  $('kicker').textContent='進展、意義與觀察';
+  $('kicker').textContent=say('readingKicker');
   updateGuide('reading',focus ? 'peek' : null);
-  $('hint').textContent='感興趣可以讀原文，或留到稍後再看。';
+  $('hint').textContent=say('readingHint');
   if(focus) $('question').focus({preventScroll:true});
 }
 $('reveal').addEventListener('click', revealCard);
@@ -187,7 +227,7 @@ function respond(remembered) {
   },280);
   state=advance(state, remembered); save(); render();
   updateGuide('reading',state.queue.length ? (remembered ? 'nod' : 'tilt') : 'settle');
-  if(!remembered) $('hint').textContent='已留到稍後；先讀這個新發現。';
+  if(!remembered) $('hint').textContent=say('laterHint');
   // Read the next heading rather than focusing a hidden reveal button. Bring
   // the new card back into view after advancing from the end of a long card.
   $('card').querySelector('h2').focus({preventScroll:true});
@@ -201,22 +241,26 @@ $('remember').addEventListener('click',()=>respond(true));
 function openReview() {
   if(!state?.completed.length) return;
   closeTermNote(false);
-  $('review-title').textContent=`今日已讀 · ${state.completed.length}`;
-  $('review-list').replaceChildren(...completedCards(state).map((card,index)=>{
+  $('review-title').textContent=say('reviewCount',{count:state.completed.length});
+  $('review-list').replaceChildren(...completedCards(state).map((original,index)=>{
+    const display=translatedCard(original,language), card=display.card;
     const item=document.createElement('details');
     item.className='review-item'; item.open=index===0;
-    const title=document.createElement('summary'); title.textContent=card.question;
+    const title=document.createElement('summary'); title.textContent=card.question; title.lang=display.language;
     const meta=document.createElement('p'); meta.className='attribution';
     meta.textContent=[card.category,card.actor || card.sourceName].filter(Boolean).join(' · ');
-    const terms=termsForCard(card);
-    const copy=document.createElement('div'); copy.className='review-copy';
+    const terms=termsForCard(card,display.language);
+    const copy=document.createElement('div'); copy.className='review-copy'; copy.lang=display.language;
     item.append(title,meta,copy);
+    if(display.fallback) {
+      const notice=document.createElement('p'); notice.className='translation-notice'; notice.textContent=say('translationMissing'); meta.after(notice);
+    }
     renderParagraphs(copy,card.answer,terms);
     // Keep interactive buttons out of the native summary toggle.
     const titleOnly=terms.filter(note=>!termSegments(card.answer,[note]).some(segment=>segment.note));
     if(titleOnly.length) {
       const labels=document.createElement('p'); labels.className='review-terms';
-      copy.before(labels); annotate(labels,'標題術語 · '+titleOnly.map(note=>note.term).join(' · '),titleOnly);
+      copy.before(labels); annotate(labels,say('titleTerms')+titleOnly.map(note=>note.term).join(' · '),titleOnly,display.language);
     }
     item.addEventListener('toggle',()=>{
       if(!item.open && activeTermNote && item.contains(activeTermNote.trigger)) closeTermNote(false);
@@ -225,7 +269,7 @@ function openReview() {
     if(url) {
       const source=document.createElement('a'); source.className='source'; source.href=url;
       source.target='_blank'; source.rel='noopener noreferrer';
-      source.textContent=`${card.sourceName || '閱讀原文'}${card.publishedAt ? ' · '+card.publishedAt.slice(0,10) : ''} ↗`;
+      source.textContent=`${card.sourceName || say('source')}${card.publishedAt ? ' · '+card.publishedAt.slice(0,10) : ''} ↗`;
       item.append(source);
     }
     return item;
@@ -255,17 +299,17 @@ async function start() {
   } catch {
     if(validCards(saved?.cards)) feed={cards:saved.cards,editionId:saved.editionId,offline:true};
     else {
-      $('question').textContent='小卡暫時沒送到。';
-      $('hint').textContent='檢查網路後，重新整理就可以再試一次。';
+      loadError='unavailable'; renderPlaceholder();
       $('reveal').hidden=true;
-      renderFeed({offline:true});
+      currentFeed={offline:true}; renderFeed(currentFeed);
       return;
     }
   } finally {
     clearTimeout(timer);
   }
   try { state=createSession(feed.cards,today,saved,feed.editionId || null); }
-  catch { $('question').textContent='小卡正在整理中。'; $('hint').textContent='請稍後重新整理。'; return; }
+  catch { loadError='invalid'; renderPlaceholder(); return; }
+  currentFeed=feed;
   save(); render();
   renderFeed(feed);
 }

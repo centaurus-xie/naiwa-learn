@@ -81,6 +81,16 @@ class FeedTests(unittest.TestCase):
         cards = [{'sourceIndex':i, 'actor':actors[i], 'category':'模型效率', 'question':f'第{i}篇文章介紹以更小架構改善模型效率',
                   'answer':actors[i]+' 團隊在文章中說明，模型採用更小的架構來提升運作效率；這並不代表所有任務都有相同表現。\n\n這可能意味著，資源有限的部署情境值得重新評估較小模型的適用性。\n\n文章摘錄未提供具體測試條件，實際效益仍需依任務驗證。',
                   'evidence':'The model improves efficiency'} for i in range(5)]
+        for i, card in enumerate(cards):
+            card['translations']={
+                'zh-Hans':{'category':'模型效率','question':f'第{i}篇文章介绍以更小架构改善模型效率',
+                           'paragraphs':[actors[i]+' 团队在文章中说明，模型采用更小的架构来提升运作效率；这并不代表所有任务都有相同表现。',
+                                         '这可能意味着，资源有限的部署情境值得重新评估较小模型的适用性。',
+                                         '文章摘录未提供具体测试条件，实际效益仍需依任务验证。'],'terms':[]},
+                'en':{'category':'Model efficiency','question':f'Article {i}: smaller architectures may improve model efficiency',
+                      'paragraphs':[actors[i]+' describes a smaller model architecture intended to improve efficiency. This does not establish the same benefit for every task.',
+                                    'In a setting with limited compute, this may make smaller models worth considering again.',
+                                    'The excerpt does not give specific test conditions. The benefit still needs to be checked on the target task.'],'terms':[]}}
         return sources, {'cards':cards}
 
     def edition(self):
@@ -132,7 +142,7 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(context['targetSourceIndexes'],[0])
         self.assertEqual(len(context['articles']),1)
         self.assertEqual(context['acceptedCardCount'],4)
-        self.assertEqual(repair['max_tokens'],1600)
+        self.assertEqual(repair['max_tokens'],3200)
         self.assertEqual(cards[1:],updater.validate_cards(valid,sources,[])[1:])
         self.assertEqual(call.call_count,2)
 
@@ -485,8 +495,55 @@ class FeedTests(unittest.TestCase):
         with patch.object(updater,'api_open',return_value=self.completion(raw)) as call:
             generated=updater.generate(sources,[],'test-key')
         self.assertEqual(call.call_count,1)
-        self.assertEqual(json.loads(call.call_args.args[0].data)['max_tokens'],8000)
+        self.assertEqual(json.loads(call.call_args.args[0].data)['max_tokens'],16000)
         self.assertTrue(all(len(card['terms'])==1 for card in generated))
+
+    def test_generation_requires_complete_translations_but_legacy_cards_still_validate(self):
+        sources, raw=self.fixture()
+        draft={key:value for key,value in raw['cards'][0].items() if key!='translations'}
+        self.assertEqual(updater.validate_one(draft,sources[0],[])['translations'],{})
+        with self.assertRaisesRegex(ValueError,'Invalid card translations'):
+            updater.validate_one(draft,sources[0],[],require_translations=True)
+
+    def test_only_card_with_bad_translation_is_repaired_within_existing_six_request_limit(self):
+        sources, valid=self.fixture()
+        invalid=json.loads(json.dumps(valid));invalid['cards'][0]['translations']['en']['paragraphs']=[]
+        with patch.object(updater,'api_open',side_effect=[self.completion(invalid),self.completion({'cards':[valid['cards'][0]]})]) as call:
+            result=updater.generate(sources,[],'test-key')
+        self.assertEqual(call.call_count,2)
+        repair=json.loads(json.loads(call.call_args.args[0].data)['messages'][-1]['content'])
+        self.assertEqual(repair['targetSourceIndexes'],[0])
+        self.assertIn('譯文',repair['validationFeedback'][0]['reason'])
+        self.assertEqual(result[1:],updater.validate_cards(valid,sources,[])[1:])
+
+    def test_translations_share_original_metadata_and_support_english_notes(self):
+        sources, raw=self.fixture();draft=raw['cards'][0]
+        draft['translations']['en'].update({'id':'fake','actor':'fake','sourceUrl':'https://evil.example/',
+            'terms':[{'term':'model','definition':'The computational system discussed in this fictional testing fixture.'}]})
+        result=updater.validate_one(draft,sources[0],[],require_translations=True)
+        version=result['translations']['en']
+        self.assertEqual(version['terms'],draft['translations']['en']['terms'])
+        self.assertEqual(len(version['answer'].split('\n\n')),3)
+        for field in ['id','actor','sourceUrl','evidence']:
+            self.assertNotIn(field,version)
+        self.assertEqual(result['actor'],'MIT')
+        self.assertEqual(result['sourceUrl'],sources[0]['url'])
+
+    def test_chinese_masquerading_as_english_or_missing_named_actor_is_rejected(self):
+        sources, raw=self.fixture()
+        for paragraphs in [['AI '+ '中文內容'*30]*3,['A team describes this fictional sample development in plain English.']*3]:
+            draft=json.loads(json.dumps(raw['cards'][0]));draft['translations']['en']['paragraphs']=paragraphs
+            with self.subTest(paragraphs=paragraphs),self.assertRaisesRegex(ValueError,'Invalid card translations'):
+                updater.validate_one(draft,sources[0],[],require_translations=True)
+
+    def test_translation_failure_has_a_safe_reason_and_cannot_publish_partial_new_edition(self):
+        sources, raw=self.fixture();raw['cards'][0]['translations'].pop('en')
+        with patch.object(updater,'api_open',return_value=self.completion(raw)) as call:
+            with self.assertRaises(updater.ContentRejected) as raised:
+                updater.generate(sources,[],'test-key')
+        self.assertEqual(call.call_count,6)
+        self.assertIn('譯文',str(raised.exception))
+        self.assertNotIn('test-key',str(raised.exception))
 
     def test_repair_replacements_use_editorial_order_not_feed_input_order(self):
         sources, valid=self.fixture()

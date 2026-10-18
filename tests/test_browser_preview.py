@@ -71,6 +71,21 @@ class BrowserPreviewTests(unittest.TestCase):
                 self.assertNotIn(term['definition'],card['answer'])
                 self.assertIn('虛構',term['definition'])
 
+    def test_language_fixture_has_distinct_complete_synthetic_editions(self):
+        body, status=self.response('i18n')
+        data=json.loads(body)
+        self.assertEqual(status,200)
+        for card in data['cards']:
+            simplified=card['translations']['zh-Hans']
+            english=card['translations']['en']
+            self.assertIn('不是真实新闻',simplified['answer'])
+            self.assertIn('not real news',english['answer'])
+            for version in [simplified,english]:
+                self.assertEqual(len(version['answer'].split('\n\n')),3)
+                self.assertEqual(len(version['terms']),3)
+                self.assertNotIn('id',version)
+                self.assertNotIn('sourceUrl',version)
+
 
 if __name__ == '__main__':
     unittest.main()

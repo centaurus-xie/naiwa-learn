@@ -110,7 +110,10 @@ test('completion reflects actual topics without scores, streaks or duplicate lab
 test('entry scripts styles and module imports share a cache-busting version',()=>{
   const html=readFileSync(new URL('../index.html',import.meta.url),'utf8');
   const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
-  const versions=[html.match(/styles\.css\?v=([^"\s]+)/)?.[1],html.match(/app\.js\?v=([^"\s]+)/)?.[1],app.match(/learning\.js\?v=([^'\s]+)/)?.[1]];
+  const learning=readFileSync(new URL('../learning.js',import.meta.url),'utf8');
+  const versions=[html.match(/styles\.css\?v=([^"\s]+)/)?.[1],html.match(/app\.js\?v=([^"\s]+)/)?.[1],app.match(/learning\.js\?v=([^'\s]+)/)?.[1],app.match(/i18n\.js\?v=([^'\s]+)/)?.[1],learning.match(/i18n\.js\?v=([^'\s]+)/)?.[1]];
   assert.ok(versions.every(value=>typeof value==='string' && value.length>0));
   assert.equal(new Set(versions).size,1);
+  const workflow=readFileSync(new URL('../.github/workflows/pages.yml',import.meta.url),'utf8');
+  assert.match(workflow,/cp index\.html styles\.css app\.js learning\.js i18n\.js _site\//);
 });

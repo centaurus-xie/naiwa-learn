@@ -24,6 +24,14 @@ button:focus-visible,a:focus-visible,summary:focus-visible { outline:3px solid #
 .brand-en { font-size:11px; letter-spacing:1.8px; font-weight:500; margin:5px 0 0 10px; color:var(--muted); }
 .daily-label { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:8px; }
 .daily-label i { height:6px; width:6px; border-radius:50%; background:#7f9571; }
+.topbar-tools { display:flex; align-items:center; gap:24px; }
+.language-switch { display:flex; gap:2px; padding:3px; border:1px solid var(--line); border-radius:13px; }
+.language-switch button { border:0; border-radius:9px; background:transparent; color:var(--muted); width:40px; height:38px; padding:0; font-size:13px; }
+.language-switch button:hover { background:#e9eddf; color:var(--green); }
+.language-switch button[aria-pressed="true"] { background:var(--green); color:white; }
+.translation-notice { font-size:12px; line-height:1.7; color:#805621; margin:-8px 0 20px; }
+html[lang="en"] h1,html[lang="en"] h2 { letter-spacing:-.5px; }
+html[lang="en"] .brand-en { display:none; }
 main { max-width:1080px; margin:44px auto 64px; display:grid; grid-template-columns:1fr 460px; gap:80px; padding:0 40px; }
 .eyebrow { font-size:11px; letter-spacing:1.6px; color:#5f6c56; font-weight:600; }
 h1 { font-size:45px; line-height:1.55; letter-spacing:-1.8px; margin:22px 0 18px; font-weight:700; }
@@ -155,10 +163,17 @@ footer>span:last-child span { font-size:17px; margin-left:10px; }
   .brand { font-size:16px; gap:7px; }
   .brand-mark { font-size:29px; }
   .daily-label { font-size:11px; gap:6px; }
+  .topbar-tools { gap:0; }
+  .topbar-tools .daily-label { display:none; }
+  .language-switch button { width:36px; height:36px; }
+  .language-switch { padding:2px; border-radius:12px; }
   main { display:block; margin:12px auto 36px; padding:0 20px; max-width:480px; }
   .intro { position:relative; padding:0 122px 24px 0; min-height:148px; }
   .eyebrow { font-size:11px; letter-spacing:.2px; line-height:1.7; }
   h1 { font-size:clamp(21px,6vw,25px); letter-spacing:-1px; margin:8px 0; line-height:1.4; }
+  html[lang="en"] h1 { font-size:clamp(20px,5.6vw,23px); }
+  html[lang="en"] .highlight { white-space:normal; }
+  html[lang="en"] .highlight:after { display:none; }
   .intro-copy { font-size:13px; line-height:1.8; }
   .intro-extra { display:none; }
   .guide-scene { position:absolute; right:-4px; bottom:14px; width:116px; margin:0; }
