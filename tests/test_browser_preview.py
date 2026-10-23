@@ -8,9 +8,9 @@ from browser_server import Handler
 
 
 class BrowserPreviewTests(unittest.TestCase):
-    def response(self, fault):
+    def response(self, fault, path='/data/cards.json'):
         handler = object.__new__(Handler)
-        handler.path = '/data/cards.json'
+        handler.path = path
         handler.headers = {'Referer': 'http://127.0.0.1:4192/?fault=' + fault}
         handler.send_response = Mock()
         handler.send_header = Mock()
@@ -41,6 +41,19 @@ class BrowserPreviewTests(unittest.TestCase):
     def test_unavailable_feed_remains_an_http_failure(self):
         _, status = self.response('unavailable')
         self.assertEqual(status, 503)
+
+    def test_mascot_states_use_isolated_module_urls_and_do_not_change_source_files(self):
+        from browser_server import ROOT
+        original = (ROOT / 'app.js').read_text(encoding='utf-8')
+        for fault in ['mascot-loading', 'mascot-fallback']:
+            body, status = self.response(fault, '/?fault=' + fault)
+            self.assertEqual(status, 200)
+            self.assertIn(('./app.js?fault=' + fault + '&v=').encode(), body)
+            self.assertNotIn(b'guide.png', body)
+            body, _ = self.response(fault, '/app.js?fault=' + fault)
+            action = 'mascotFallback();' if fault == 'mascot-fallback' else ''
+            self.assertIn(('const prepareMascot=()=>{' + action + 'return;').encode(), body)
+        self.assertEqual((ROOT / 'app.js').read_text(encoding='utf-8'), original)
 
     def test_guide_fixture_has_distinct_topics_and_explicitly_synthetic_content(self):
         body, status = self.response('guide')

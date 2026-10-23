@@ -48,45 +48,45 @@ export function turnMotion(state,dx,dy,now) {
   state.targetYaw+=dx; state.targetPitch=clamp(state.targetPitch+dy,-.3,.3);
   state.returnAt=now+2.4;
 }
-export function playMotion(state,name,now) {
+export function playMotion(state,name) {
   if(!Object.hasOwn(DURATIONS,name)) return false;
-  state.action={name,started:now,duration:DURATIONS[name]};
+  state.action={name,elapsed:0,duration:DURATIONS[name]};
   return true;
 }
-export function tapMotion(state,now) {
+export function tapMotion(state) {
   const name=['wave','hop','nod'][state.sequence++%3];
-  playMotion(state,name,now); return name;
+  playMotion(state,name); return name;
 }
 
-export function stepMotion(state,dt,now,reduced=false) {
+export function stepMotion(state,dt,now) {
   dt=clamp(dt,0,.05);
   if(!state.pointer) {
-    if(reduced) state.velocity=0;
     state.targetYaw+=state.velocity*dt;
     state.velocity*=Math.exp(-dt*7);
     if(now>=state.returnAt) {
-      state.targetYaw=reduced ? nearestFront(state.targetYaw) : state.targetYaw+(nearestFront(state.targetYaw)-state.targetYaw)*ease(dt,3.5);
-      state.targetPitch=reduced ? 0 : state.targetPitch*Math.exp(-dt*5);
+      state.targetYaw+=(nearestFront(state.targetYaw)-state.targetYaw)*ease(dt,3.5);
+      state.targetPitch*=Math.exp(-dt*5);
     }
   }
   for(const [key,target,speed] of [['yaw','targetYaw',16],['pitch','targetPitch',14],['lookX','targetLookX',12],['lookY','targetLookY',12],['press','targetPress',16]]) {
-    state[key]=reduced ? state[target] : state[key]+(state[target]-state[key])*ease(dt,speed);
+    state[key]+=(state[target]-state[key])*ease(dt,speed);
   }
-  if(reduced) state.action=null;
   const action=state.action;
-  const p=action ? clamp((now-action.started)/action.duration,0,1) : 0;
+  // Advance only by frames actually rendered. A late first frame, background
+  // pause, or a different rAF timestamp must not consume the whole response.
+  if(action) action.elapsed+=dt;
+  const p=action ? clamp(action.elapsed/action.duration,0,1) : 0;
   const envelope=action && p<1 ? Math.sin(p*Math.PI) : 0;
   const name=action?.name;
-  const quiet=reduced ? 0 : 1;
-  const wave=name==='wave' ? envelope*(2.05+Math.sin(p*5*Math.PI)*.15)*quiet : 0;
-  const jump=name==='hop' || name==='settle' ? envelope*(name==='hop' ? .23 : .1)*quiet : 0;
-  const nod=name==='nod' || name==='peek' ? Math.sin(p*TAU)*envelope*.14*quiet : 0;
-  const roll=name==='tilt' ? envelope*.14*quiet : wave*.035;
+  const wave=name==='wave' ? envelope*(2.05+Math.sin(p*5*Math.PI)*.15) : 0;
+  const jump=name==='hop' || name==='settle' ? envelope*(name==='hop' ? .23 : .1) : 0;
+  const nod=name==='nod' || name==='peek' ? Math.sin(p*TAU)*envelope*.14 : 0;
+  const roll=name==='tilt' ? envelope*.14 : wave*.035;
   const blink=(name==='nod' || name==='wave') && p>.38 && p<.53 ? .22 : 1;
   if(action && p>=1) state.action=null;
-  return {yaw:state.yaw,pitch:state.pitch+nod,roll:roll-state.lookX*.025*quiet,
-    lift:jump,scaleY:1-state.press*.035*quiet-(name==='hop' ? Math.sin(p*TAU)*.045*quiet : 0),
-    wave,blink:reduced ? 1 : blink,lookX:state.lookX,lookY:state.lookY,
+  return {yaw:state.yaw,pitch:state.pitch+nod,roll:roll-state.lookX*.025,
+    lift:jump,scaleY:1-state.press*.035-(name==='hop' ? Math.sin(p*TAU)*.045 : 0),
+    wave,blink,lookX:state.lookX,lookY:state.lookY,
     active:!!state.action || Math.abs(state.velocity)>.002 || ['yaw','pitch','lookX','lookY','press'].some(key=>Math.abs(state[key]-state['target'+key[0].toUpperCase()+key.slice(1)])>.0005)
       || (!state.pointer && now>=state.returnAt && (Math.abs(Math.sin(state.targetYaw))>.001 || Math.abs(state.targetPitch)>.001))};
 }

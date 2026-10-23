@@ -2,7 +2,8 @@
 
 Run from the repository root: python3 tests/browser_server.py
 Use /?fault=healthy, invalid-json, incomplete, unavailable, new-edition,
-bad-date, timezone, reading, guide, guide-failed, terms, i18n.
+bad-date, timezone, reading, guide, guide-failed, terms, i18n,
+mascot-loading, mascot-fallback.
 This server only changes its own in-memory response; repository data stays intact.
 """
 import json
@@ -17,6 +18,27 @@ ROOT = Path(__file__).resolve().parents[1]
 class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         url = urlsplit(self.path)
+        fault = parse_qs(url.query).get('fault', ['healthy'])[0]
+        if fault in {'mascot-loading', 'mascot-fallback'} and url.path in {'/', '/app.js'}:
+            # Only local fixture responses change. Distinct module URLs avoid
+            # reusing another tab's cached healthy JS; no production test hooks.
+            if url.path == '/':
+                source = (ROOT / 'index.html').read_text(encoding='utf-8')
+                source = source.replace('./app.js?v=', './app.js?fault=' + fault + '&v=')
+                content_type = 'text/html; charset=utf-8'
+            else:
+                source = (ROOT / 'app.js').read_text(encoding='utf-8')
+                action = 'mascotFallback();' if fault == 'mascot-fallback' else ''
+                source = source.replace('const prepareMascot=()=>{', 'const prepareMascot=()=>{' + action + 'return;')
+                content_type = 'text/javascript; charset=utf-8'
+            body = source.encode()
+            self.send_response(200)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if url.path != '/data/cards.json':
             return super().do_GET()
         # Derive the fixture from this tab's referrer, not a shared global.

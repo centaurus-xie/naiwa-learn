@@ -1,10 +1,10 @@
-import {beginDrag,endDrag,lookAt,moveDrag,resetMotion,tapMotion,turnMotion} from './motion.js?v=20261023-2';
+import {beginDrag,endDrag,lookAt,moveDrag,resetMotion,tapMotion,turnMotion} from './motion.js?v=20261024-1';
 
 // Pointer Events handle mouse, pen, and touch through the same bounded gestures.
 export function attachControls({button,resetButton,motion,wake,onAction=()=>{},scheduleReturn=()=>{},clock=()=>performance.now()/1000}) {
   const abort=new AbortController(),options={signal:abort.signal};
   let pointerClickUntil=-Infinity;
-  const activate=()=>{onAction(tapMotion(motion,clock()));wake();};
+  const activate=()=>{onAction(tapMotion(motion));wake();};
   const release=id=>{if(button.hasPointerCapture?.(id)) button.releasePointerCapture(id);};
   const reset=()=>{
     const id=motion.pointer?.id; resetMotion(motion); if(id!==undefined) release(id);

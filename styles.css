@@ -46,9 +46,10 @@ h1 { font-size:42px; line-height:1.5; letter-spacing:-1.8px; margin:20px 0 16px;
 .mascot-window { position:relative; display:block; height:230px; width:100%; overflow:hidden; border:0; border-radius:24px; padding:0; background:transparent; touch-action:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; cursor:grab; }
 .mascot-window.is-dragging { cursor:grabbing; }
 .mascot-window:disabled { cursor:default; touch-action:pan-y; }
-.mascot { position:absolute; left:0; top:0; width:280px; max-width:none; transform:translate(-10px,-16px); mix-blend-mode:multiply; pointer-events:none; }
-.mascot-canvas { position:absolute; inset:0; display:block; width:100%; height:100%; pointer-events:none; }
+.mascot { position:absolute; inset:0; display:block; width:100%; height:100%; object-fit:contain; pointer-events:none; }
+.mascot-canvas { position:absolute; inset:0; display:block; width:100%; height:100%; visibility:hidden; pointer-events:none; }
 .guide-scene[data-renderer="ready"] .mascot { display:none; }
+.guide-scene[data-renderer="ready"] .mascot-canvas { visibility:visible; }
 .mascot-reset { position:absolute; right:5px; bottom:4px; width:36px; height:36px; padding:0; border:1px solid transparent; border-radius:50%; color:#65715c; background:transparent; font-size:20px; }
 .mascot-reset:hover { border-color:#d7dfcd; background:#eff2e9; color:var(--green); }
 .guide-caption { display:block; min-height:20px; font-size:11px; line-height:1.7; letter-spacing:.3px; color:#64715b; }
@@ -153,7 +154,6 @@ footer>span:last-child span { font-size:17px; margin-left:10px; }
   .guide-scene { width:100%; }
   .speech { gap:8px; }
   .mascot-stage { width:230px; }
-  .mascot { width:260px; transform:translate(-15px,-8px); }
   footer { margin:0 26px; }
   .card { padding:24px; }
 }
@@ -180,7 +180,6 @@ footer>span:last-child span { font-size:17px; margin-left:10px; }
   .guide-scene { position:absolute; right:-4px; bottom:14px; width:128px; margin:0; }
   .mascot-stage { width:128px; margin:0; }
   .mascot-window { height:136px; border-radius:14px; }
-  .mascot { width:140px; transform:translate(-15px,-7px); }
   .speech { font-size:11px; padding:6px 8px; gap:0; max-width:128px; line-height:1.6; margin-bottom:-3px; }
   .speech span { display:none; }
   .guide-caption { font-size:10px; letter-spacing:0; line-height:1.6; min-height:32px; }
@@ -204,7 +203,4 @@ footer>span:last-child span { font-size:17px; margin-left:10px; }
   .review-dialog { padding:22px; }
   .review-item { padding:16px; }
   .review-heading h2 { font-size:21px; }
-}
-@media(prefers-reduced-motion:reduce) {
-  *,*:before,*:after { animation:none!important; transition:none!important; }
 }

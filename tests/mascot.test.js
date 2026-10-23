@@ -7,9 +7,9 @@ import {applyPose,createNaiwa,disposeNaiwa} from '../assets/mascot/model.js';
 import {mountNaiwa} from '../assets/mascot/scene.js';
 import {LANGUAGES,t} from '../i18n.js';
 
-function run(state,start,end,reduced=false) {
+function run(state,start,end) {
   let pose;
-  for(let time=start;time<end;time+=1/60) pose=stepMotion(state,1/60,time,reduced);
+  for(let time=start;time<end;time+=1/60) pose=stepMotion(state,1/60,time);
   return pose;
 }
 class Button extends EventTarget {
@@ -22,6 +22,7 @@ class Button extends EventTarget {
   hasPointerCapture(id){return this.captures.has(id);}
   releasePointerCapture(id){this.captures.delete(id);}
   focus(){this.focused=true;}
+  append(){}
 }
 function dispatch(button,type,properties={}) {
   const event=new Event(type,{cancelable:true});Object.assign(event,properties);button.dispatchEvent(event);return event;
@@ -48,11 +49,11 @@ test('Naiwa is a real volumetric mesh with green eyes, a belly and articulated a
 });
 test('pose changes the 3D arm, eye and body transforms rather than a CSS image',()=>{
   const model=createNaiwa();
-  const motion=createMotion();playMotion(motion,'wave',0);
-  const pose=stepMotion(motion,1/60,.65);applyPose(model,pose);
+  const motion=createMotion();playMotion(motion,'wave');
+  const pose=run(motion,0,.65);applyPose(model,pose);
   assert.ok(model.arms[0].rotation.z>1.5);
   assert.ok(Math.abs(model.root.rotation.z)>0);
-  playMotion(motion,'hop',1);applyPose(model,stepMotion(motion,1/60,1.4));
+  playMotion(motion,'hop');applyPose(model,run(motion,1,1.4));
   assert.ok(model.root.position.y>.15);
   disposeNaiwa(model);
 });
@@ -95,17 +96,38 @@ test('release settles to the nearest front and eventually stops rendering',()=>{
 });
 test('tap responses cycle, complete, and do not become an idle animation',()=>{
   const state=createMotion();
-  assert.deepEqual([0,1,2,3].map(time=>tapMotion(state,time)),['wave','hop','nod','wave']);
-  assert.equal(playMotion(state,'__proto__',4),false);
+  assert.deepEqual([0,1,2,3].map(()=>tapMotion(state)),['wave','hop','nod','wave']);
+  assert.equal(playMotion(state,'__proto__'),false);
   assert.equal(run(state,4,8).active,false);
 });
-test('reduced motion disables playful animation and inertia but allows direct rotation',()=>{
-  const state=createMotion();tapMotion(state,0);
-  const quiet=stepMotion(state,1/60,.5,true);
-  assert.equal(quiet.wave,0);assert.equal(quiet.lift,0);assert.equal(quiet.active,false);
-  beginDrag(state,1,0,0,1);moveDrag(state,1,50,0,200,240,1.1);
-  assert.equal(stepMotion(state,1/60,1.1,true).yaw,state.targetYaw);
-  endDrag(state,1,1.2);run(state,1.21,5,true);assert.equal(state.velocity,0);
+test('a delayed first frame cannot silently expire a tap response',()=>{
+  const state=createMotion();tapMotion(state);
+  const first=stepMotion(state,1/60,10000);
+  assert.ok(first.wave>0);assert.equal(first.active,true);
+  assert.ok(run(state,10000,10000.6).wave>1);
+  assert.equal(run(state,10001,10004).active,false);
+});
+test('background and slow-frame gaps cannot jump straight to the end of an action',()=>{
+  const state=createMotion();playMotion(state,'hop');
+  run(state,0,.2);const before=state.action.elapsed;
+  const pose=stepMotion(state,30,30000);
+  assert.ok(Math.abs(state.action.elapsed-before-.05)<1e-8);
+  assert.ok(pose.lift>0);assert.equal(pose.active,true);
+  assert.equal(run(state,30000,30002).active,false);
+});
+test('30, 60 and 120 Hz frames produce the same animation at equal playback time',()=>{
+  const poses=[];
+  for(const hz of [30,60,120]) {
+    const state=createMotion();playMotion(state,'wave');let pose;
+    for(let i=1;i<=hz/2;i++) pose=stepMotion(state,1/hz,i/hz);
+    poses.push(pose);
+  }
+  for(const pose of poses) assert.ok(Math.abs(pose.wave-poses[0].wave)<1e-8);
+});
+test('site animations no longer depend on system reduced-motion preferences',()=>{
+  for(const file of ['assets/mascot/scene.js','assets/mascot/motion.js','styles.css']) {
+    assert.doesNotMatch(readFileSync(new URL('../'+file,import.meta.url),'utf8'),/prefers-reduced-motion|reduced\.matches/);
+  }
 });
 test('home reset never spins a long way back through multiple revolutions',()=>{
   const state=createMotion();state.yaw=state.targetYaw=Math.PI*8+1;
@@ -128,7 +150,7 @@ test('a touch tap responds on release even when Safari does not send a click',()
   assert.deepEqual(c.actions,[]);
   c.setTime(.1);dispatch(c.button,'pointerup',{pointerId:4,clientX:40,clientY:50});
   assert.deepEqual(c.actions,['wave']);assert.equal(c.motion.action.name,'wave');
-  assert.ok(stepMotion(c.motion,1/60,.6).wave>1);c.detach();
+  assert.ok(run(c.motion,.1,.6).wave>1);c.detach();
 });
 test('normal finger jitter neither rotates Naiwa nor prevents a tap',()=>{
   const c=controls();
@@ -231,10 +253,53 @@ test('detaching controls removes handlers and releases the gesture state',()=>{
   assert.deepEqual(c.actions,[]);assert.equal(c.motion.pointer,null);
   assert.equal(c.button.captures.size,0);
 });
+test('the scene renders a tap over multiple frames with an independent callback timestamp',()=>{
+  const names=['window','document','performance','requestAnimationFrame','cancelAnimationFrame','ResizeObserver','IntersectionObserver','matchMedia'];
+  const previous=new Map(names.map(name=>[name,Object.getOwnPropertyDescriptor(globalThis,name)]));
+  const frames=new Map(),renders=[],actions=[],button=new Button();
+  let time=0,next=0,ready=0,fallback=0,handle;
+  const domElement=new EventTarget();domElement.setAttribute=()=>{};domElement.remove=()=>{};
+  const renderer={domElement,setClearColor(){},setPixelRatio(){},setSize(){},dispose(){},
+    render(scene){renders.push(scene.getObjectByName('Waving arm').rotation.z);}};
+  const flush=()=>{
+    const callbacks=[...frames.values()];frames.clear();time+=1/60;
+    // Deliberately unlike performance.now(): animation must use its own clock.
+    for(const callback of callbacks) callback(1000000000);
+  };
+  try {
+    const values={window:Object.assign(new EventTarget(),{devicePixelRatio:2}),
+      document:Object.assign(new EventTarget(),{hidden:false}),performance:{now:()=>time*1000},
+      requestAnimationFrame:callback=>{frames.set(++next,callback);return next;},
+      cancelAnimationFrame:id=>frames.delete(id),
+      ResizeObserver:class {observe(){} disconnect(){}},
+      IntersectionObserver:class {observe(){} disconnect(){}},
+      matchMedia:()=>{throw new Error('System motion preferences must not gate animation');}};
+    for(const [name,value] of Object.entries(values)) Object.defineProperty(globalThis,name,{value,configurable:true,writable:true});
+    handle=mountNaiwa({button,resetButton:new Button(),onReady:()=>ready++,onFallback:()=>fallback++,onAction:name=>actions.push(name)},()=>renderer);
+    assert.ok(handle);assert.equal(ready,1);assert.equal(fallback,0);flush();
+    assert.equal(frames.size,0);
+    dispatch(button,'pointerdown',{pointerId:1,clientX:40,clientY:50,pointerType:'touch',button:0});
+    dispatch(button,'pointerup',{pointerId:1,clientX:40,clientY:50});
+    assert.deepEqual(actions,['wave']);
+    // A delayed callback must still visibly animate, not report success only.
+    time+=10;flush();assert.equal(frames.size,1);
+    for(let i=0;i<35;i++) flush();
+    assert.ok(Math.max(...renders)>1.5);
+    for(let i=0;i<150;i++) flush();
+    assert.equal(frames.size,0);
+    handle.react('hop');assert.equal(frames.size,1);flush();
+    handle.dispose();assert.equal(frames.size,0);
+  } finally {
+    handle?.dispose();
+    for(const [name,descriptor] of previous) {
+      if(descriptor) Object.defineProperty(globalThis,name,descriptor);else delete globalThis[name];
+    }
+  }
+});
 test('failure to create WebGL leaves the caller a clean static fallback',()=>{
-  const previous={matchMedia:globalThis.matchMedia,cancelAnimationFrame:globalThis.cancelAnimationFrame};
+  const previous={cancelAnimationFrame:globalThis.cancelAnimationFrame};
   let fallback=0;
-  globalThis.matchMedia=()=>({matches:false});globalThis.cancelAnimationFrame=()=>{};
+  globalThis.cancelAnimationFrame=()=>{};
   try {
     const result=mountNaiwa({button:new Button(),resetButton:new Button(),onFallback:()=>fallback++});
     assert.equal(result,null);assert.equal(fallback,1);
@@ -252,4 +317,17 @@ test('interactive copy exists in all three languages and engine stays local and 
   assert.ok(!source.includes('https://'));assert.ok(!source.includes('setInterval'));
   const workflow=readFileSync(new URL('../.github/workflows/pages.yml',import.meta.url),'utf8');
   assert.ok(workflow.includes('cp -R assets _site/'));
+});
+test('loading and fallback use a bounded transparent first-frame asset, never the original character',()=>{
+  const html=readFileSync(new URL('../index.html',import.meta.url),'utf8');
+  assert.match(html,/src="\.\/assets\/mascot\/naiwa-poster\.png"/);
+  assert.doesNotMatch(html,/guide\.png/);
+  const png=readFileSync(new URL('../assets/mascot/naiwa-poster.png',import.meta.url));
+  assert.equal(png.subarray(1,4).toString(),'PNG');assert.ok(png.length<200000);
+  assert.equal(png.readUInt32BE(16),400);assert.equal(png.readUInt32BE(20),520);
+  assert.equal(png[25],6); // RGBA: transparent background, not a captured page rectangle.
+  const css=readFileSync(new URL('../styles.css',import.meta.url),'utf8');
+  assert.match(css,/\.mascot \{[^}]*object-fit:contain/);
+  assert.match(css,/\.mascot-canvas \{[^}]*visibility:hidden/);
+  assert.match(css,/\[data-renderer="ready"\] \.mascot-canvas \{ visibility:visible/);
 });

@@ -1,11 +1,11 @@
 import {ACESFilmicToneMapping,DirectionalLight,HemisphereLight,OrthographicCamera,Scene,WebGLRenderer} from './three.min.js?v=0.186.1';
-import {applyPose,createNaiwa,disposeNaiwa} from './model.js?v=20261023-2';
-import {createMotion,playMotion,resetMotion,stepMotion} from './motion.js?v=20261023-2';
-import {attachControls} from './controls.js?v=20261023-2';
+import {applyPose,createNaiwa,disposeNaiwa} from './model.js?v=20261024-1';
+import {createMotion,playMotion,stepMotion} from './motion.js?v=20261024-1';
+import {attachControls} from './controls.js?v=20261024-1';
 
-export function mountNaiwa({button,resetButton,onReady=()=>{},onFallback=()=>{},onAction=()=>{}}) {
+export function mountNaiwa({button,resetButton,onReady=()=>{},onFallback=()=>{},onAction=()=>{}},createRenderer=options=>new WebGLRenderer(options)) {
   let renderer,model,resizeObserver,visibilityObserver,detach=()=>{};
-  const motion=createMotion(),reduced=matchMedia('(prefers-reduced-motion: reduce)');
+  const motion=createMotion();
   const abort=new AbortController();
   let frame=0,returnTimer=0,last=0,visible=true,disposed=false;
   const now=()=>performance.now()/1000;
@@ -13,11 +13,11 @@ export function mountNaiwa({button,resetButton,onReady=()=>{},onFallback=()=>{},
   const camera=new OrthographicCamera(-2,2,3.6,-.3,.1,30);
   camera.position.set(0,2.25,7); camera.lookAt(0,1.66,0);
   const stop=()=>{cancelAnimationFrame(frame);frame=0;last=0;};
-  function draw(stamp) {
+  function draw() {
     frame=0;
     if(disposed || !visible || document.hidden) return;
-    const seconds=stamp/1000,dt=last ? seconds-last : 1/60; last=seconds;
-    const pose=stepMotion(motion,dt,seconds,reduced.matches);
+    const seconds=now(),dt=last ? seconds-last : 1/60; last=seconds;
+    const pose=stepMotion(motion,dt,seconds);
     applyPose(model,pose); renderer.render(scene,camera);
     if(pose.active) frame=requestAnimationFrame(draw); else last=0;
   }
@@ -46,7 +46,7 @@ export function mountNaiwa({button,resetButton,onReady=()=>{},onFallback=()=>{},
   }
   function fallback() {dispose();onFallback();}
   try {
-    renderer=new WebGLRenderer({alpha:true,antialias:true,powerPreference:'low-power'});
+    renderer=createRenderer({alpha:true,antialias:true,powerPreference:'low-power'});
     renderer.setClearColor(0x000000,0);renderer.toneMapping=ACESFilmicToneMapping;renderer.toneMappingExposure=1;
     renderer.domElement.setAttribute('aria-hidden','true');renderer.domElement.className='mascot-canvas';
     model=createNaiwa();scene.add(model.root,model.shadow);
@@ -55,8 +55,8 @@ export function mountNaiwa({button,resetButton,onReady=()=>{},onFallback=()=>{},
     const fill=new DirectionalLight(0xe8f2ff,.8);fill.position.set(4,3,2);scene.add(fill);
     button.append(renderer.domElement);
     resize();
-    // First render must succeed before hiding the reference image.
-    applyPose(model,stepMotion(motion,0,now(),reduced.matches));renderer.render(scene,camera);
+    // First render must succeed before replacing the matching static first frame.
+    applyPose(model,stepMotion(motion,0,now()));renderer.render(scene,camera);
     renderer.domElement.addEventListener('webglcontextlost',event=>{event.preventDefault();fallback();},{signal:abort.signal});
     resizeObserver=new ResizeObserver(resize);resizeObserver.observe(button);
     visibilityObserver=new IntersectionObserver(entries=>{
@@ -66,10 +66,9 @@ export function mountNaiwa({button,resetButton,onReady=()=>{},onFallback=()=>{},
     document.addEventListener('visibilitychange',()=>{if(document.hidden) stop();else wake();},{signal:abort.signal});
     window.addEventListener('pagehide',event=>{stop();if(!event.persisted) dispose();},{signal:abort.signal});
     window.addEventListener('pageshow',wake,{signal:abort.signal});
-    reduced.addEventListener('change',()=>{resetMotion(motion);wake();},{signal:abort.signal});
     detach=attachControls({button,resetButton,motion,wake,onAction,scheduleReturn,clock:now});
     onReady();
-    return {react(name){if(!disposed && !reduced.matches && !motion.pointer) {playMotion(motion,name,now());wake();}},dispose};
+    return {react(name){if(!disposed && !motion.pointer) {playMotion(motion,name);wake();}},dispose};
   } catch {
     fallback();return null;
   }
