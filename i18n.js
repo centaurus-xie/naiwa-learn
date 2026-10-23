@@ -65,6 +65,7 @@ const COPY={
   invalidTitle:['小卡正在整理中。','小卡正在整理中。','The cards are being prepared.'],
   invalidHint:['請稍後重新整理。','请稍后重新整理。','Please refresh in a moment.'],
   footer:['一點一點，就會不一樣。','一点一点，就会不一样。','Little by little, a different perspective.'],
+  version:['版本','版本','Version'],
   disclaimer:['AI 整理可能有誤，請參照各卡片原文。','AI 整理可能有误，请参照各卡片原文。','AI summaries may contain errors. Please check each original article.'],
   updateDetails:['更新詳情','更新详情','Update details'],
   updateReason:['查看更新原因','查看更新原因','Why wasn’t it updated?'],

@@ -67,6 +67,8 @@ jobs:
           cp -R assets _site/
           mkdir -p _site/data
           cp data/cards.json _site/data/
+      - name: Stamp visible site version
+        run: python3 scripts/stamp_version.py _site/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

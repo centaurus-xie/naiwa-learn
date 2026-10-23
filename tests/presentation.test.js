@@ -114,6 +114,8 @@ test('entry scripts styles and module imports share a cache-busting version',()=
   const versions=[html.match(/styles\.css\?v=([^"\s]+)/)?.[1],html.match(/app\.js\?v=([^"\s]+)/)?.[1],app.match(/learning\.js\?v=([^'\s]+)/)?.[1],app.match(/i18n\.js\?v=([^'\s]+)/)?.[1],learning.match(/i18n\.js\?v=([^'\s]+)/)?.[1]];
   assert.ok(versions.every(value=>typeof value==='string' && value.length>0));
   assert.equal(new Set(versions).size,1);
+  assert.equal(html.match(/id="site-version">v([^<]+)/)?.[1],versions[0]);
+  assert.match(html,/<footer>[\s\S]*class="site-version"[\s\S]*<\/footer>/);
   assert.equal(app.match(/scene\.js\?v=([^'\s]+)/)?.[1],versions[0]);
   for(const name of ['scene','model','controls']) {
     const source=readFileSync(new URL(`../assets/mascot/${name}.js`,import.meta.url),'utf8');

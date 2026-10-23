@@ -320,7 +320,7 @@ test('interactive copy exists in all three languages and engine stays local and 
 });
 test('loading and fallback use a bounded transparent first-frame asset, never the original character',()=>{
   const html=readFileSync(new URL('../index.html',import.meta.url),'utf8');
-  assert.match(html,/src="\.\/assets\/mascot\/naiwa-poster\.png"/);
+  assert.match(html,/src="\.\/assets\/mascot\/naiwa-poster\.png\?v=[^"]+"/);
   assert.doesNotMatch(html,/guide\.png/);
   const png=readFileSync(new URL('../assets/mascot/naiwa-poster.png',import.meta.url));
   assert.equal(png.subarray(1,4).toString(),'PNG');assert.ok(png.length<200000);

@@ -516,6 +516,103 @@ class FeedTests(unittest.TestCase):
         self.assertIn('譯文',repair['validationFeedback'][0]['reason'])
         self.assertEqual(result[1:],updater.validate_cards(valid,sources,[])[1:])
 
+    def test_translation_only_reply_preserves_grounded_prose_and_valid_language(self):
+        sources, valid=self.fixture()
+        invalid=json.loads(json.dumps(valid));invalid['cards'][2]['translations']['en']['paragraphs']=[]
+        repair={'sourceIndex':2,'actor':'Invented actor','question':'不能覆寫已合格標題',
+                'answer':'不能覆寫已合格正文','translations':{
+                    'zh-Hans':{'question':'不能覆盖已合格译文'},
+                    'en':valid['cards'][2]['translations']['en']}}
+        with patch.object(updater,'api_open',side_effect=[self.completion(invalid),self.completion({'cards':[repair]})]) as call:
+            cards=updater.generate(sources,[],'test-key')
+        self.assertEqual(cards,updater.validate_cards(valid,sources,[]))
+        request=json.loads(call.call_args.args[0].data)
+        context=json.loads(request['messages'][-1]['content'])
+        self.assertEqual(context['repairTargets'],[{'sourceIndex':2,'stage':'translations','languages':['en']}])
+        self.assertEqual(context['articles'],[])
+        self.assertEqual(context['lockedCards'][0]['actor'],'Microsoft')
+        self.assertEqual(context['lockedCards'][0]['answer'],valid['cards'][2]['answer'])
+        self.assertEqual(context['validationFeedback'][0]['translationIssues'],[
+            {'language':'en','field':'paragraphs','rule':'three_nonempty_paragraphs','actual':0}])
+        self.assertIn('本輪只修譯文',request['messages'][0]['content'])
+
+    def test_each_repaired_language_stays_locked_through_later_revisions(self):
+        sources, valid=self.fixture();invalid=json.loads(json.dumps(valid))
+        invalid['cards'][0]['translations']={}
+        simplified={'sourceIndex':0,'translations':{'zh-Hans':valid['cards'][0]['translations']['zh-Hans']}}
+        english={'sourceIndex':0,'translations':{'en':valid['cards'][0]['translations']['en']}}
+        replies=[self.completion(invalid),self.completion({'cards':[simplified]})]+[
+            self.completion({'cards':[]}) for _ in range(3)]+[self.completion({'cards':[english]})]
+        with patch.object(updater,'api_open',side_effect=replies) as call:
+            cards=updater.generate(sources,[],'test-key')
+        self.assertEqual(call.call_count,6)
+        self.assertEqual(cards,updater.validate_cards(valid,sources,[]))
+        last=json.loads(json.loads(call.call_args.args[0].data)['messages'][-1]['content'])
+        self.assertEqual(last['repairTargets'][0]['languages'],['en'])
+        self.assertIn('zh-Hans',last['lockedCards'][0]['translations'])
+        self.assertEqual(last['previousDrafts'],[])
+
+    def test_translation_feedback_reports_all_bad_fields_without_echoing_prose(self):
+        sources, raw=self.fixture();draft=raw['cards'][0]
+        draft['translations']['en'].update({'category':'x','question':'short',
+            'paragraphs':['A brief first paragraph.','Another brief paragraph.','A brief final paragraph.']})
+        with self.assertRaises(updater.TranslationRejected) as raised:
+            updater.validate_one(draft,sources[0],[],require_translations=True)
+        issues=raised.exception.issues
+        self.assertTrue(all(issue['language']=='en' for issue in issues))
+        self.assertEqual({issue['field'] for issue in issues},{'category','question','answer','paragraphs[0]'})
+        reason=updater.failure_reason(raised.exception)
+        self.assertIn('英文譯文 question',reason)
+        self.assertIn('長度 5',reason)
+        self.assertIn('12–180',reason)
+        self.assertIn('首段須保留具名主體',reason)
+        self.assertNotIn('brief first',reason)
+        self.assertEqual(updater.feedback_draft(draft)['translations']['en']['paragraphs'],draft['translations']['en']['paragraphs'])
+
+    def test_both_invalid_languages_are_reported_and_not_silently_accepted(self):
+        sources, raw=self.fixture();raw['cards'][0]['translations']={}
+        with self.assertRaises(updater.TranslationRejected) as raised:
+            updater.validate_one(raw['cards'][0],sources[0],[],require_translations=True)
+        self.assertEqual({issue['language'] for issue in raised.exception.issues},{'zh-Hans','en'})
+        self.assertEqual(updater.card_translations(raw['cards'][0]),{})
+
+    def test_locked_cores_still_reserve_benchmark_slots_during_mixed_repairs(self):
+        sources, valid=self.fixture();invalid=json.loads(json.dumps(valid))
+        invalid['cards'][0]['question']='第一個模型在新基準評測中的排名進展'
+        invalid['cards'][0]['translations']['en']['paragraphs']=[]
+        invalid['cards'][1]['question']='第二個模型在新基準評測中的排名進展'
+        replies=[self.completion(invalid),self.completion({'cards':[
+            {'sourceIndex':0,'translations':{'en':valid['cards'][0]['translations']['en']}},valid['cards'][1]]})]
+        with patch.object(updater,'api_open',side_effect=replies) as call:
+            cards=updater.generate(sources,[],'test-key')
+        context=json.loads(json.loads(call.call_args.args[0].data)['messages'][-1]['content'])
+        self.assertEqual(context['remainingBenchmarkSlots'],0)
+        self.assertEqual([target['stage'] for target in context['repairTargets']],['translations','card'])
+        self.assertEqual(sum(bool(updater.BENCHMARK.search(card['question'])) for card in cards),1)
+
+    def test_locked_cores_also_reserve_their_headlines_until_translation_is_ready(self):
+        sources, valid=self.fixture();invalid=json.loads(json.dumps(valid))
+        invalid['cards'][0]['translations']['en']['paragraphs']=[]
+        invalid['cards'][1]['question']=invalid['cards'][0]['question']
+        replies=[self.completion(invalid),self.completion({'cards':[
+            {'sourceIndex':0,'translations':{'en':valid['cards'][0]['translations']['en']}},valid['cards'][1]]})]
+        with patch.object(updater,'api_open',side_effect=replies) as call:
+            cards=updater.generate(sources,[],'test-key')
+        context=json.loads(json.loads(call.call_args.args[0].data)['messages'][-1]['content'])
+        self.assertIn(valid['cards'][0]['question'],context['previousQuestions'])
+        self.assertEqual(cards,updater.validate_cards(valid,sources,[]))
+
+    def test_prompt_example_itself_passes_the_same_format_and_translation_checks(self):
+        sources, raw=self.fixture()
+        with patch.object(updater,'api_open',return_value=self.completion(raw)) as call:
+            updater.generate(sources,[],'test-key')
+        system=json.loads(call.call_args.args[0].data)['messages'][0]['content']
+        example=json.loads(system.split('完整虛構格式示例：',1)[1])['cards'][0]
+        source={**sources[0],'body':'Example Lab describes a fictional example of a small model organizing documents.'}
+        card=updater.validate_one(example,source,[],require_translations=True)
+        self.assertEqual(set(card['translations']),{'zh-Hans','en'})
+        self.assertTrue(80<=len(card['answer'])<=320)
+
     def test_translations_share_original_metadata_and_support_english_notes(self):
         sources, raw=self.fixture();draft=raw['cards'][0]
         draft['translations']['en'].update({'id':'fake','actor':'fake','sourceUrl':'https://evil.example/',

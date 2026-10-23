@@ -1,4 +1,4 @@
-import {languageOf,localeOf,t} from './i18n.js?v=20261024-1';
+import {languageOf,localeOf,t} from './i18n.js?v=20261024-2';
 
 export function dayKey(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Hong_Kong',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);

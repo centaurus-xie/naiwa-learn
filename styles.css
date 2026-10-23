@@ -119,9 +119,11 @@ h2 { font-size:25px; line-height:1.65; font-weight:600; margin:14px 0 28px; lett
 .feed-detail-body p { margin:0; }
 .feed-detail-body .feed-disclaimer { margin-top:10px; padding-top:10px; border-top:1px solid #d9dfd0; color:#526345; }
 .storage-notice { text-align:center; color:#805621; font-size:12px; line-height:1.8; }
-footer { border-top:1px solid var(--line); max-width:1000px; margin:0 auto; padding:25px 0; display:flex; justify-content:space-between; font-size:11px; color:#65715c; }
-footer>span:last-child { font-size:10px; letter-spacing:1.6px; }
-footer>span:last-child span { font-size:17px; margin-left:10px; }
+footer { border-top:1px solid var(--line); max-width:1000px; margin:0 auto; padding:25px 0; display:flex; flex-direction:column; gap:12px; font-size:11px; color:#65715c; }
+.footer-line { display:flex; justify-content:space-between; align-items:center; }
+.footer-line>span:last-child { font-size:10px; letter-spacing:1.6px; }
+.footer-line>span:last-child span { font-size:17px; margin-left:10px; }
+.site-version { align-self:center; max-width:100%; font-size:11px; line-height:1.8; letter-spacing:.2px; overflow-wrap:anywhere; }
 
 .card.complete { background:#edf1e5; justify-content:center; text-align:center; }
 .card.complete h2 { font-size:30px; }
@@ -198,8 +200,9 @@ footer>span:last-child span { font-size:17px; margin-left:10px; }
   .actions .again { flex:.9; }
   .actions .remember { flex:1.1; }
   .actions button:hover { transform:none; }
-  footer { padding:20px 0; justify-content:center; }
-  footer>span:last-child { display:none; }
+  footer { padding:20px 0; }
+  .footer-line { justify-content:center; }
+  .footer-line>span:last-child { display:none; }
   .review-dialog { padding:22px; }
   .review-item { padding:16px; }
   .review-heading h2 { font-size:21px; }
