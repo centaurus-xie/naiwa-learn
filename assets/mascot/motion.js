@@ -8,9 +8,10 @@ export function createMotion() {
   return {yaw:0,pitch:0,targetYaw:0,targetPitch:0,velocity:0,lookX:0,lookY:0,
     targetLookX:0,targetLookY:0,press:0,targetPress:0,pointer:null,action:null,sequence:0,returnAt:0};
 }
-export function beginDrag(state,id,x,y,now) {
+export function beginDrag(state,id,x,y,now,pointerType='mouse') {
   if(state.pointer) return false;
-  state.pointer={id,x,y,lastX:x,lastAt:now,yaw:state.targetYaw,pitch:state.targetPitch,moved:false};
+  state.pointer={id,x,y,lastX:x,lastY:y,lastAt:now,yaw:state.targetYaw,pitch:state.targetPitch,
+    threshold:pointerType==='touch' ? 12 : 5,moved:false};
   state.velocity=0; state.targetPress=1; state.action=null;
   return true;
 }
@@ -18,17 +19,20 @@ export function moveDrag(state,id,x,y,width,height,now) {
   const pointer=state.pointer;
   if(!pointer || pointer.id!==id) return false;
   const dx=x-pointer.x,dy=y-pointer.y;
-  pointer.moved ||= Math.hypot(dx,dy)>5;
-  state.targetYaw=pointer.yaw+dx/Math.max(1,width)*TAU;
-  state.targetPitch=clamp(pointer.pitch+dy/Math.max(1,height)*.85,-.3,.3);
-  state.velocity=clamp((x-pointer.lastX)/Math.max(.008,now-pointer.lastAt)/Math.max(1,width)*TAU,-6,6);
-  pointer.lastX=x; pointer.lastAt=now;
+  pointer.moved ||= Math.hypot(dx,dy)>pointer.threshold;
+  // Finger jitter is still a tap: do not rotate or add inertia before a drag starts.
+  if(pointer.moved) {
+    state.targetYaw=pointer.yaw+dx/Math.max(1,width)*TAU;
+    state.targetPitch=clamp(pointer.pitch+dy/Math.max(1,height)*.85,-.3,.3);
+    state.velocity=clamp((x-pointer.lastX)/Math.max(.008,now-pointer.lastAt)/Math.max(1,width)*TAU,-6,6);
+  }
+  pointer.lastX=x; pointer.lastY=y; pointer.lastAt=now;
   return true;
 }
 export function endDrag(state,id,now,cancel=false) {
   if(!state.pointer || state.pointer.id!==id) return null;
   const moved=state.pointer.moved;
-  if(cancel || now-state.pointer.lastAt>.12) state.velocity=0;
+  if(cancel || !moved || now-state.pointer.lastAt>.12) state.velocity=0;
   state.pointer=null; state.targetPress=0; state.returnAt=now+2.4;
   return {moved,cancelled:cancel};
 }

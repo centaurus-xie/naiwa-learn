@@ -122,12 +122,86 @@ test('mouse drag uses pointer capture and suppresses the trailing click',()=>{
   assert.deepEqual(c.actions,['turn']);assert.equal(c.motion.sequence,0);
   assert.equal(c.button.captures.size,0);assert.equal(c.returns,1);c.detach();
 });
-test('a touch tap and a keyboard click use the same gesture actions',()=>{
+test('a touch tap responds on release even when Safari does not send a click',()=>{
   const c=controls();
   dispatch(c.button,'pointerdown',{pointerId:4,clientX:40,clientY:50,pointerType:'touch',isPrimary:true,button:0});
-  dispatch(c.button,'pointerup',{pointerId:4});dispatch(c.button,'click',{detail:1});
-  dispatch(c.button,'click',{detail:0});
+  assert.deepEqual(c.actions,[]);
+  c.setTime(.1);dispatch(c.button,'pointerup',{pointerId:4,clientX:40,clientY:50});
+  assert.deepEqual(c.actions,['wave']);assert.equal(c.motion.action.name,'wave');
+  assert.ok(stepMotion(c.motion,1/60,.6).wave>1);c.detach();
+});
+test('normal finger jitter neither rotates Naiwa nor prevents a tap',()=>{
+  const c=controls();
+  dispatch(c.button,'pointerdown',{pointerId:4,clientX:40,clientY:50,pointerType:'touch',button:0});
+  c.setTime(.05);dispatch(c.button,'pointermove',{pointerId:4,clientX:47,clientY:54,pointerType:'touch'});
+  assert.equal(c.motion.targetYaw,0);assert.equal(c.motion.targetPitch,0);assert.equal(c.motion.velocity,0);
+  c.setTime(.1);dispatch(c.button,'pointerup',{pointerId:4,clientX:48,clientY:55});
+  assert.deepEqual(c.actions,['wave']);assert.equal(c.motion.velocity,0);c.detach();
+});
+test('touch release and its compatibility click execute only one action',()=>{
+  for(const click of [{detail:1,pointerType:'touch'},{detail:1},{detail:0}]) {
+    const c=controls();
+    dispatch(c.button,'pointerdown',{pointerId:4,clientX:40,clientY:50,pointerType:'touch',button:0});
+    c.setTime(.1);dispatch(c.button,'pointerup',{pointerId:4,clientX:40,clientY:50});
+    c.setTime(.4);dispatch(c.button,'click',click);
+    assert.deepEqual(c.actions,['wave']);assert.equal(c.motion.sequence,1);c.detach();
+  }
+});
+test('keyboard activation immediately after a pointer tap remains available',()=>{
+  const c=controls();
+  dispatch(c.button,'pointerdown',{pointerId:4,clientX:40,clientY:50,pointerType:'touch',button:0});
+  dispatch(c.button,'pointerup',{pointerId:4,clientX:40,clientY:50});
+  dispatch(c.button,'keydown',{key:'Enter'});dispatch(c.button,'click',{detail:0});
   assert.deepEqual(c.actions,['wave','hop']);c.detach();
+});
+test('rapid taps without compatibility clicks still cycle one action per release',()=>{
+  const c=controls();
+  for(let i=0;i<3;i++) {
+    c.setTime(i*.15);
+    dispatch(c.button,'pointerdown',{pointerId:i+1,clientX:40,clientY:50,pointerType:'touch',button:0});
+    dispatch(c.button,'pointerup',{pointerId:i+1,clientX:40,clientY:50});
+  }
+  assert.deepEqual(c.actions,['wave','hop','nod']);assert.equal(c.motion.sequence,3);c.detach();
+});
+test('mouse and pen taps also activate on release without duplicate clicks',()=>{
+  for(const pointerType of ['mouse','pen']) {
+    const c=controls();
+    dispatch(c.button,'pointerdown',{pointerId:1,clientX:40,clientY:50,pointerType,button:0});
+    c.setTime(.1);dispatch(c.button,'pointerup',{pointerId:1,clientX:40,clientY:50});
+    dispatch(c.button,'click',{pointerType,detail:1});
+    assert.deepEqual(c.actions,['wave']);c.detach();
+  }
+});
+test('a touch drag rotates but never triggers a tap action on release',()=>{
+  const c=controls();
+  dispatch(c.button,'pointerdown',{pointerId:4,clientX:40,clientY:50,pointerType:'touch',button:0});
+  c.setTime(.1);dispatch(c.button,'pointermove',{pointerId:4,clientX:90,clientY:65,pointerType:'touch'});
+  const velocity=c.motion.velocity;
+  c.setTime(.11);dispatch(c.button,'pointerup',{pointerId:4,clientX:90,clientY:65});
+  dispatch(c.button,'lostpointercapture',{pointerId:4});dispatch(c.button,'click',{detail:1,pointerType:'touch'});
+  assert.ok(c.motion.targetYaw>0);assert.equal(c.motion.velocity,velocity);
+  assert.deepEqual(c.actions,['turn']);assert.equal(c.motion.sequence,0);c.detach();
+});
+test('release coordinates catch a drag even when the last pointermove is missing',()=>{
+  const c=controls();
+  dispatch(c.button,'pointerdown',{pointerId:4,clientX:40,clientY:50,pointerType:'touch',button:0});
+  c.setTime(.1);dispatch(c.button,'pointerup',{pointerId:4,clientX:90,clientY:65});
+  assert.deepEqual(c.actions,['turn']);assert.ok(c.motion.targetYaw>0);c.detach();
+});
+test('lifting just outside the control cancels a tap even within the jitter tolerance',()=>{
+  const c=controls();
+  dispatch(c.button,'pointerdown',{pointerId:4,clientX:198,clientY:50,pointerType:'touch',button:0});
+  c.setTime(.1);dispatch(c.button,'pointerup',{pointerId:4,clientX:201,clientY:50});
+  dispatch(c.button,'click',{detail:1});
+  assert.deepEqual(c.actions,[]);assert.equal(c.motion.pointer,null);c.detach();
+});
+test('assistive clicks work without any pointer sequence and after the deduplication window',()=>{
+  const c=controls();dispatch(c.button,'click',{detail:0});
+  assert.deepEqual(c.actions,['wave']);
+  dispatch(c.button,'pointerdown',{pointerId:4,clientX:40,clientY:50,pointerType:'touch',button:0});
+  dispatch(c.button,'pointerup',{pointerId:4,clientX:40,clientY:50});
+  c.setTime(2);dispatch(c.button,'click',{detail:0});
+  assert.deepEqual(c.actions,['wave','hop','nod']);c.detach();
 });
 test('cancelled touch, lost capture and focus loss never become an accidental tap',()=>{
   for(const type of ['pointercancel','lostpointercapture','blur']) {
