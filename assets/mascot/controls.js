@@ -1,4 +1,4 @@
-import {beginDrag,endDrag,lookAt,moveDrag,resetMotion,tapMotion,turnMotion} from './motion.js?v=20261024-2';
+import {beginDrag,endDrag,lookAt,moveDrag,resetMotion,tapMotion,turnMotion} from './motion.js?v=20261024-3';
 
 // Pointer Events handle mouse, pen, and touch through the same bounded gestures.
 export function attachControls({button,resetButton,motion,wake,onAction=()=>{},scheduleReturn=()=>{},clock=()=>performance.now()/1000}) {
