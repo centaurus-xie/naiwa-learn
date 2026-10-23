@@ -1,0 +1,2 @@
+# Preserve generated third-party shader strings without rewriting their content.
+assets/mascot/three.min.js -whitespace linguist-vendored linguist-generated

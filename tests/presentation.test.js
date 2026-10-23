@@ -114,6 +114,11 @@ test('entry scripts styles and module imports share a cache-busting version',()=
   const versions=[html.match(/styles\.css\?v=([^"\s]+)/)?.[1],html.match(/app\.js\?v=([^"\s]+)/)?.[1],app.match(/learning\.js\?v=([^'\s]+)/)?.[1],app.match(/i18n\.js\?v=([^'\s]+)/)?.[1],learning.match(/i18n\.js\?v=([^'\s]+)/)?.[1]];
   assert.ok(versions.every(value=>typeof value==='string' && value.length>0));
   assert.equal(new Set(versions).size,1);
+  assert.equal(app.match(/scene\.js\?v=([^'\s]+)/)?.[1],versions[0]);
+  for(const name of ['scene','model','controls']) {
+    const source=readFileSync(new URL(`../assets/mascot/${name}.js`,import.meta.url),'utf8');
+    for(const match of source.matchAll(/(?:model|controls|motion)\.js\?v=([^'\s]+)/g)) assert.equal(match[1],versions[0]);
+  }
   const workflow=readFileSync(new URL('../.github/workflows/pages.yml',import.meta.url),'utf8');
   assert.match(workflow,/cp index\.html styles\.css app\.js learning\.js i18n\.js _site\//);
 });

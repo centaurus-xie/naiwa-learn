@@ -6,6 +6,11 @@
   "scripts": {
     "start": "python3 -m http.server 4173 --bind 127.0.0.1",
     "test": "node --test tests/*.test.js",
-    "update": "python3 scripts/update_cards.py"
+    "update": "python3 scripts/update_cards.py",
+    "vendor:three": "node scripts/vendor_three.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "three": "0.186.1"
   }
 }

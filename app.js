@@ -1,5 +1,5 @@
-import { createSession, advance, dayKey, validCards, feedInfo, completedCards, startReading, guideMessage, completionMessage, termsForCard, termSegments } from './learning.js?v=20261018-1';
-import {LANGUAGE_KEY,languageOf,localeOf,t,translatedCard} from './i18n.js?v=20261018-1';
+import { createSession, advance, dayKey, validCards, feedInfo, completedCards, startReading, guideMessage, completionMessage, termsForCard, termSegments } from './learning.js?v=20261023-1';
+import {LANGUAGE_KEY,languageOf,localeOf,t,translatedCard} from './i18n.js?v=20261023-1';
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'naiwa-learning-v1';
@@ -14,6 +14,7 @@ let advancing = false;
 let activeTermNote = null;
 let noteSequence = 0;
 let today = dayKey();
+let mascot=null,mascotMode='loading',mascotHintKey='mascotLoading',mascotStatusKey=null,mascotHintTimer=0;
 const cardTemplate = $('card').innerHTML;
 function localizeStatic(root) {
   root.querySelectorAll('[data-i18n]').forEach(element=>element.textContent=say(element.dataset.i18n));
@@ -25,6 +26,7 @@ function applyLanguage() {
   document.title=say('brand')+' · AI Daily';
   document.querySelector('meta[name="description"]').content=say('description');
   localizeStatic(document);
+  refreshMascotCopy();
   document.querySelectorAll('[data-language]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.language===language)));
   const date=new Intl.DateTimeFormat(localeOf(language),{timeZone:'Asia/Hong_Kong',month:'long',day:'numeric',weekday:'short'}).format(new Date());
   $('date-label').textContent=`${date} · DAILY DISCOVERY`;
@@ -45,6 +47,42 @@ document.querySelectorAll('[data-language]').forEach(button=>button.addEventList
 }));
 applyLanguage();
 renderPlaceholder();
+
+function refreshMascotCopy() {
+  $('mascot-control').setAttribute('aria-label',say(mascotMode==='ready' ? 'mascotControl' : 'mascotAlt'));
+  $('mascot-hint').textContent=say(mascotHintKey);
+  if(mascotStatusKey) $('mascot-status').textContent=say(mascotStatusKey);
+}
+function mascotFallback() {
+  mascotMode='fallback';mascotHintKey='mascotFallback';mascotStatusKey=null;
+  clearTimeout(mascotHintTimer);$('mascot-status').textContent='';
+  $('mascot-control').disabled=true;$('mascot-reset').hidden=true;
+  $('guide-scene').dataset.renderer='fallback';refreshMascotCopy();
+}
+function startMascot() {
+  import('./assets/mascot/scene.js?v=20261023-1').then(({mountNaiwa})=>{
+    mascot=mountNaiwa({button:$('mascot-control'),resetButton:$('mascot-reset'),
+      onFallback:mascotFallback,
+      onReady(){
+        mascotMode='ready';mascotHintKey='mascotHint';
+        $('guide-scene').dataset.renderer='ready';$('mascot-control').disabled=false;
+        $('mascot-reset').hidden=false;refreshMascotCopy();
+      },
+      onAction(action){
+        mascotStatusKey=mascotHintKey='mascot.'+action;refreshMascotCopy();clearTimeout(mascotHintTimer);
+        mascotHintTimer=setTimeout(()=>{mascotHintKey='mascotHint';refreshMascotCopy();},2100);
+      }});
+  }).catch(mascotFallback);
+}
+// News and reading controls load first. Failure of the optional 3D module is isolated.
+const prepareMascot=()=>{
+  if('requestIdleCallback' in window) window.requestIdleCallback(startMascot,{timeout:1500});
+  else setTimeout(startMascot,100);
+};
+if('IntersectionObserver' in window) {
+  const observer=new IntersectionObserver(entries=>{if(entries[0].isIntersecting) {observer.disconnect();prepareMascot();}});
+  observer.observe($('mascot-control'));
+} else prepareMascot();
 
 function save() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); }
@@ -122,12 +160,7 @@ function updateGuide(phase='preview',reaction=null) {
   const card=state.cards.find(c=>c.id===state.queue[0]);
   const message=state.queue.length ? guideMessage(card,phase,language) : completionMessage(completedCards(state),language);
   if($('guide-message').textContent!==message) $('guide-message').textContent=message;
-  const scene=$('guide-scene');
-  scene.removeAttribute('data-reaction');
-  if(reaction) {
-    void scene.offsetWidth;
-    scene.dataset.reaction=reaction;
-  }
+  if(reaction) mascot?.react(reaction);
 }
 function render({animate=true}={}) {
   closeTermNote(false);
