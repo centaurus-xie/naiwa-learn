@@ -43,7 +43,7 @@ jobs:
           path: data/cards.json
           key: cards-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: cards-
-      - name: Generate DeepSeek cards (repair up to 6 requests)
+      - name: Generate DeepSeek cards (up to 3 attempts per card)
         id: refresh
         continue-on-error: true
         env:

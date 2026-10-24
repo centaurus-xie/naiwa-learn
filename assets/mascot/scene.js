@@ -1,7 +1,7 @@
 import {ACESFilmicToneMapping,DirectionalLight,HemisphereLight,OrthographicCamera,Scene,WebGLRenderer} from './three.min.js?v=0.186.1';
-import {applyPose,createNaiwa,disposeNaiwa} from './model.js?v=20261024-3';
-import {createMotion,playMotion,stepMotion} from './motion.js?v=20261024-3';
-import {attachControls} from './controls.js?v=20261024-3';
+import {applyPose,createNaiwa,disposeNaiwa} from './model.js?v=20261024-4';
+import {createMotion,playMotion,stepMotion} from './motion.js?v=20261024-4';
+import {attachControls} from './controls.js?v=20261024-4';
 
 export function mountNaiwa({button,resetButton,onReady=()=>{},onFallback=()=>{},onAction=()=>{}},createRenderer=options=>new WebGLRenderer(options)) {
   let renderer,model,resizeObserver,visibilityObserver,detach=()=>{};

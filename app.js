@@ -1,5 +1,5 @@
-import { createSession, advance, dayKey, validCards, feedInfo, completedCards, startReading, guideMessage, completionMessage, termsForCard, termSegments } from './learning.js?v=20261024-3';
-import {LANGUAGE_KEY,languageOf,localeOf,t,translatedCard} from './i18n.js?v=20261024-3';
+import { createSession, advance, dayKey, validCards, feedInfo, completedCards, startReading, guideMessage, completionMessage, termsForCard, termSegments } from './learning.js?v=20261024-4';
+import {LANGUAGE_KEY,languageOf,localeOf,t,translatedCard} from './i18n.js?v=20261024-4';
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'naiwa-learning-v1';
@@ -60,7 +60,7 @@ function mascotFallback() {
   $('guide-scene').dataset.renderer='fallback';refreshMascotCopy();
 }
 function startMascot() {
-  import('./assets/mascot/scene.js?v=20261024-3').then(({mountNaiwa})=>{
+  import('./assets/mascot/scene.js?v=20261024-4').then(({mountNaiwa})=>{
     mascot=mountNaiwa({button:$('mascot-control'),resetButton:$('mascot-reset'),
       onFallback:mascotFallback,
       onReady(){
