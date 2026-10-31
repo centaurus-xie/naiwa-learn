@@ -1,13 +1,20 @@
-import {languageOf,localeOf,t} from './i18n.js?v=20261024-4';
+import {languageOf,localeOf,t} from './i18n.js?v=20261031-1';
 
 export function dayKey(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Hong_Kong',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
 }
 
 export function validCards(cards) {
-  return Array.isArray(cards) && cards.length===5 && new Set(cards.map(c=>c?.id)).size===5
+  return Array.isArray(cards) && cards.length>=1 && cards.length<=5 && new Set(cards.map(c=>c?.id)).size===cards.length
     && cards.every(c=>c && ['id','question','answer','category'].every(k=>typeof c[k]==='string' && c[k].trim() && c[k].length<=2000)
       && ['sourceUrl','sourceName','publishedAt','newsTitle','evidence','actor'].every(k=>c[k]===undefined || typeof c[k]==='string'));
+}
+
+// Old editions contain five cards. Short editions must declare their size so
+// an accidentally truncated feed cannot masquerade as an intentional release.
+export function validFeed(feed) {
+  return validCards(feed?.cards) && Number.isInteger(feed.cardCount ?? 5)
+    && (feed.cardCount ?? 5)===feed.cards.length;
 }
 
 function termPattern(term) {
@@ -60,6 +67,7 @@ export function feedStatus(feed,language='zh-Hant') {
   let label=published ? say('feedPublished',{date:published}) : say(feed.mode==='llm' ? 'feedUnknown' : 'feedSeed');
   if(checked) label+=' ｜ '+say('checked',{date:checked});
   if(published || checked) label+=' · '+say('timezone');
+  if(Number.isInteger(feed.cardCount) && feed.cardCount>0 && feed.cardCount<5) label+=' · '+say('partialEdition',{count:feed.cardCount});
   if(['no-new-articles','already-generated-today','update-failed','content-retained','generation-failed','selection-unavailable'].includes(feed.status)) label+=' · '+say('status.'+feed.status);
   if(feed.status==='generation-failed' && Number.isInteger(feed.generationAttempts) && feed.generationAttempts>0) label+=say('attempts',{count:feed.generationAttempts});
   if(['generation-failed','selection-unavailable','update-failed'].includes(feed.status) && typeof feed.updateReason==='string') label+=' · '+say('diagnostic',{reason:feed.updateReason.slice(0,260)});
@@ -134,19 +142,19 @@ export function completionMessage(cards,language='zh-Hant') {
 }
 
 export function createSession(cards, day, saved, editionId = null) {
-  if(!validCards(cards)) throw new Error('Expected five complete, unique cards');
+  if(!validCards(cards)) throw new Error('Expected one to five complete, unique cards');
   // Legacy data without an edition ID still changes when its card content changes.
   const version=typeof editionId==='string' && editionId ? editionId : JSON.stringify(cards.map(c=>[c.id,c.question,c.answer,termsForCard(c)]));
-  if(saved?.day===day && saved.editionId===version && validCards(saved.cards)
+  if(saved?.day===day && saved.editionId===version && validCards(saved.cards) && saved.cards.length===cards.length
     && saved.cards.every((c,i)=>c.id===cards[i].id && c.question===cards[i].question && c.answer===cards[i].answer
       && JSON.stringify(termsForCard(c))===JSON.stringify(termsForCard(cards[i])))
-    && Array.isArray(saved.queue) && Array.isArray(saved.completed) && saved.total===5
-    && new Set([...saved.queue,...saved.completed]).size===5
-    && saved.queue.length+saved.completed.length===5
+    && Array.isArray(saved.queue) && Array.isArray(saved.completed) && saved.total===cards.length
+    && new Set([...saved.queue,...saved.completed]).size===cards.length
+    && saved.queue.length+saved.completed.length===cards.length
     && [...saved.queue,...saved.completed].every(id=>cards.some(c=>c.id===id))) {
     return {...saved,cards,readingStarted:saved.readingStarted===true || saved.completed.length>0};
   }
-  return {day,editionId:version,cards,queue:cards.map(c=>c.id),completed:[],total:5,readingStarted:false};
+  return {day,editionId:version,cards,queue:cards.map(c=>c.id),completed:[],total:cards.length,readingStarted:false};
 }
 
 export function startReading(state) {

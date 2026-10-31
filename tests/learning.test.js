@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createSession,advance,validCards,feedStatus,completedCards,dayKey,startReading} from '../learning.js';
+import {createSession,advance,validCards,validFeed,feedStatus,completedCards,dayKey,startReading} from '../learning.js';
 const cards=Array.from({length:5},(_,i)=>({id:String(i),question:'Q',answer:'A',category:'AI'}));
 test('review returns card to end without awarding progress',()=>{
   const s=advance(createSession(cards,'2026-10-11'),false);
@@ -43,10 +43,25 @@ test('legacy editions without metadata still refresh when content changes',()=>{
   assert.equal(fresh.cards[0].answer,'new answer');
 });
 test('reject damaged feeds rather than silently showing fewer cards',()=>{
-  for(const damaged of [null,[],cards.slice(0,4),[...cards.slice(0,4),null],cards.map(c=>({...c,id:'duplicate'})),cards.map(c=>({...c,publishedAt:42}))]){
+  for(const damaged of [null,[],[...cards.slice(0,4),null],cards.map(c=>({...c,id:'duplicate'})),cards.map(c=>({...c,publishedAt:42}))]){
     assert.equal(validCards(damaged),false);
     assert.throws(()=>createSession(damaged,'2026-10-11'));
   }
+});
+test('intentional short editions complete, reload and retain every read card',()=>{
+  for(const count of [1,4,5]) {
+    const edition=cards.slice(0,count);
+    assert.equal(validFeed({cards:edition,cardCount:count}),true);
+    let session=createSession(edition,'2026-10-31',null,'partial-'+count);
+    for(let i=0;i<count;i++) session=advance(session,true);
+    session=createSession(edition,'2026-10-31',session,'partial-'+count);
+    assert.equal(session.total,count);
+    assert.equal(session.queue.length,0);
+    assert.deepEqual(completedCards(session),edition);
+  }
+  assert.equal(validFeed({cards:cards.slice(0,4)}),false);
+  assert.equal(validFeed({cards:cards.slice(0,4),cardCount:5}),false);
+  assert.equal(validFeed({cards,cardCount:'5'}),false);
 });
 test('bad timestamps never interrupt reading or claim a new release',()=>{
   const status=feedStatus({generatedAt:'garbage',checkedAt:{},status:'content-retained'});

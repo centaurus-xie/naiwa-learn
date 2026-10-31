@@ -93,6 +93,9 @@ class Handler(SimpleHTTPRequestHandler):
                     data.update({'generatedAt':'2026-10-12T07:36:00Z',
                                  'status':'generation-failed','generationAttempts':6,
                                  'updateReason':'本機顯示測試：卡2導讀長度不符；這不是實際生成結果。'})
+        elif self.fault == 'partial':
+            data['cards'] = data['cards'][:4]
+            data.update({'cardCount':4, 'targetCount':5, 'status':'updated-partial', 'editionId':'browser-partial-preview'})
         elif self.fault == 'incomplete':
             data['cards'] = data['cards'][:4]
         elif self.fault == 'new-edition':

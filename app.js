@@ -1,5 +1,5 @@
-import { createSession, advance, dayKey, validCards, feedInfo, completedCards, startReading, guideMessage, completionMessage, termsForCard, termSegments } from './learning.js?v=20261024-4';
-import {LANGUAGE_KEY,languageOf,localeOf,t,translatedCard} from './i18n.js?v=20261024-4';
+import { createSession, advance, dayKey, validCards, validFeed, feedInfo, completedCards, startReading, guideMessage, completionMessage, termsForCard, termSegments } from './learning.js?v=20261031-1';
+import {LANGUAGE_KEY,languageOf,localeOf,t,translatedCard} from './i18n.js?v=20261031-1';
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'naiwa-learning-v1';
@@ -60,7 +60,7 @@ function mascotFallback() {
   $('guide-scene').dataset.renderer='fallback';refreshMascotCopy();
 }
 function startMascot() {
-  import('./assets/mascot/scene.js?v=20261024-4').then(({mountNaiwa})=>{
+  import('./assets/mascot/scene.js?v=20261031-1').then(({mountNaiwa})=>{
     mascot=mountNaiwa({button:$('mascot-control'),resetButton:$('mascot-reset'),
       onFallback:mascotFallback,
       onReady(){
@@ -328,9 +328,9 @@ async function start() {
     const response=await fetch('./data/cards.json',{cache:'no-cache',signal:controller.signal});
     if(!response.ok) throw new Error('feed');
     feed=await response.json();
-    if(!feed || !validCards(feed.cards)) throw new Error('invalid-feed');
+    if(!validFeed(feed)) throw new Error('invalid-feed');
   } catch {
-    if(validCards(saved?.cards)) feed={cards:saved.cards,editionId:saved.editionId,offline:true};
+    if(validCards(saved?.cards) && saved.total===saved.cards.length) feed={cards:saved.cards,cardCount:saved.total,editionId:saved.editionId,offline:true};
     else {
       loadError='unavailable'; renderPlaceholder();
       $('reveal').hidden=true;

@@ -213,14 +213,13 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(set(cards[0]['translations']),{'zh-Hans'})
         self.assertEqual(call.call_count,7)
 
-    def test_wrong_attribution_still_blocks_publication_and_other_cards_are_not_regenerated(self):
+    def test_wrong_attribution_only_blocks_its_card_and_other_cards_are_not_regenerated(self):
         sources, valid=self.fixture();wrong={**valid['cards'][1],'actor':'Invented Lab'}
         with patch.object(updater,'api_open',side_effect=self.responder(sources,valid,{1:[{'card':wrong}]})) as call:
-            with self.assertRaises(updater.ContentRejected) as raised:updater.generate(sources,[],'test-key')
+            cards=updater.generate(sources,[],'test-key')
         self.assertEqual(call.call_count,7)
-        self.assertEqual(raised.exception.attempts,7)
-        self.assertIn('卡2',str(raised.exception))
-        self.assertIn('具名',str(raised.exception))
+        self.assertEqual(len(cards),4)
+        self.assertEqual([c['sourceUrl'] for c in cards],[s['url'] for i,s in enumerate(sources) if i!=1])
 
     def test_duplicate_article_can_be_replaced_without_rewriting_accepted_cards(self):
         sources, valid=self.fixture();duplicate={**valid['cards'][4],'question':'香港科技大學介紹更小架構改善運作效率'}
@@ -236,7 +235,7 @@ class FeedTests(unittest.TestCase):
         sources, valid=self.fixture();wrong={**valid['cards'][0],'actor':'Unknown Lab'}
         candidates=[{**sources[0],'url':sources[0]['url']+f'-{i}'} for i in range(6)]
         with patch.object(updater,'api_open',side_effect=self.responder(sources,valid,{0:[{'card':wrong}]})),patch.object(updater,'article_body',side_effect=ValueError('unavailable')) as read:
-            with self.assertRaises(updater.ContentRejected):updater.generate(sources,[],'test-key',alternatives=[sources[0],*candidates])
+            self.assertEqual(len(updater.generate(sources,[],'test-key',alternatives=[sources[0],*candidates])),4)
         urls=[item.args[0] for item in read.call_args_list]
         self.assertEqual(len(urls),4)
         self.assertEqual(len(set(urls)),4)
@@ -318,6 +317,56 @@ class FeedTests(unittest.TestCase):
         self.assertNotEqual(published['generatedAt'],previous['generatedAt'])
         self.assertEqual(set(published['cards'][0]['translations']),{'zh-Hans'})
         self.assertTrue(updater.valid_edition(published))
+
+    def test_partial_edition_is_written_reloadable_and_only_published_sources_enter_history(self):
+        sources, valid=self.fixture()
+        previous=self.edition();previous['sourceHistory']=[]
+        wrong={**valid['cards'][3],'actor':'Invented Lab'}
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);(root/'data').mkdir()
+            target=root/'data/cards.json'
+            with patch.object(updater,'ROOT',root),patch.object(updater,'load_previous',return_value=previous),patch.object(updater,'collect_articles',return_value=sources),patch.object(updater,'select_sources',return_value=sources),patch.dict('os.environ',{'LLM_API_KEY':'test-key'}),patch.object(updater,'api_open',side_effect=self.responder(sources,valid,{3:[{'card':wrong}]})) as call:
+                self.assertEqual(updater.main(),0)
+            published=updater.read_edition(target)
+        self.assertIsNotNone(published)
+        self.assertEqual(call.call_count,7)
+        self.assertEqual(published['status'],'updated-partial')
+        self.assertEqual(published['cardCount'],4)
+        self.assertEqual(len(published['cards']),4)
+        self.assertNotEqual(published['editionId'],previous['editionId'])
+        self.assertNotEqual(published['generatedAt'],previous['generatedAt'])
+        self.assertEqual(published['sourceHistory'],[s['url'] for i,s in enumerate(sources) if i!=3])
+        self.assertFalse(updater.valid_edition({**published,'cardCount':5}))
+        self.assertFalse(updater.valid_edition({**published,'cardCount':True}))
+        self.assertFalse(updater.valid_edition({k:v for k,v in published.items() if k!='cardCount'}))
+
+    def test_interrupted_generation_keeps_valid_original_even_without_translations(self):
+        sources, valid=self.fixture();raw=json.loads(json.dumps(valid))
+        raw['cards'][0].pop('translations')
+        first=self.responder(sources,raw)
+        for limit in [1,3]:
+            requests=0
+            def respond(request,timeout):
+                nonlocal requests
+                requests+=1
+                if requests>limit:raise TimeoutError('offline')
+                return first(request,timeout)
+            with patch.object(updater,'api_open',side_effect=respond) as call:
+                cards=updater.generate(sources,[],'test-key')
+            self.assertEqual(len(cards),limit)
+            self.assertEqual(call.call_count,limit+1)
+            self.assertEqual([c['sourceUrl'] for c in cards],[s['url'] for s in sources[:limit]])
+
+    def test_supported_actor_can_appear_in_headline_or_later_paragraph(self):
+        for position in ['headline','later']:
+            sources,raw=self.fixture();card=raw['cards'][0]
+            card['answer']=card['answer'].replace('MIT','這個')
+            if position=='headline':card['question']='MIT '+card['question']
+            else:card['answer']+='\n\nMIT 是這項工作的具名團隊。'
+            card['translations']['en']['paragraphs'][0]=card['translations']['en']['paragraphs'][0].replace('MIT','The team')
+            card['translations']['en']['question']='MIT '+card['translations']['en']['question']
+            result=updater.validate_one(card,sources[0],[],require_translations=True)
+            self.assertEqual(result['actor'],'MIT')
 
     def test_service_failure_during_optional_translation_keeps_new_originals(self):
         from urllib.error import URLError
@@ -658,12 +707,12 @@ class FeedTests(unittest.TestCase):
             updater.validate_one(draft,sources[0],[],require_translations=True)
         issues=raised.exception.issues
         self.assertTrue(all(issue['language']=='en' for issue in issues))
-        self.assertEqual({issue['field'] for issue in issues},{'category','question','answer','paragraphs[0]'})
+        self.assertEqual({issue['field'] for issue in issues},{'category','question','answer'})
         reason=updater.failure_reason(raised.exception)
         self.assertIn('英文譯文 question',reason)
         self.assertIn('長度 5',reason)
         self.assertIn('6–240',reason)
-        self.assertIn('首段須保留具名主體',reason)
+        self.assertIn('標題或正文須保留具名主體',reason)
         self.assertNotIn('brief first',reason)
         self.assertEqual(updater.draft_issue(0,raised.exception,draft,sources[0])['translationIssues'],issues)
 
@@ -771,7 +820,7 @@ class FeedTests(unittest.TestCase):
             self.assertEqual(after['cards'],previous['cards'])
             self.assertEqual(after['generatedAt'],previous['generatedAt'])
 
-    def test_actor_must_be_named_supported_and_introduced_in_first_paragraph(self):
+    def test_actor_must_be_named_supported_and_visible_in_the_card(self):
         for kind in ['generic','invented','substring','missing-introduction']:
             sources, raw=self.fixture()
             if kind=='generic': raw['cards'][0]['actor']='作者'

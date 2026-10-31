@@ -6,6 +6,16 @@ import {feedInfo,guideTopic,guideMessage,completionMessage} from '../learning.js
 const now=new Date('2026-10-16T04:00:00Z');
 const current={mode:'llm',generatedAt:'2026-10-16T00:17:00Z',checkedAt:'2026-10-16T00:18:00Z',status:'updated'};
 
+test('partial releases disclose the count in every language without claiming failure or freshness tomorrow',()=>{
+  for(const language of ['zh-Hant','zh-Hans','en']) {
+    const feed={...current,status:'updated-partial',cardCount:4};
+    const today=feedInfo(feed,now,language);
+    assert.equal(today.tone,'neutral');
+    assert.match(today.details,/4/);
+    assert.equal(feedInfo(feed,new Date('2026-10-17T04:00:00Z'),language).summary,today.summary);
+  }
+});
+
 test('normal feed has a concise summary and full times only in the details',()=>{
   const info=feedInfo(current,now);
   assert.equal(info.summary,'10月16日更新 · 香港時間 · AI 整理');
