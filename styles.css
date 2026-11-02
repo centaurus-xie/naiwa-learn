@@ -121,6 +121,9 @@ h2 { font-size:25px; line-height:1.65; font-weight:600; margin:14px 0 28px; lett
 .storage-notice { text-align:center; color:#805621; font-size:12px; line-height:1.8; }
 footer { border-top:1px solid var(--line); max-width:1000px; margin:0 auto; padding:25px 0; display:flex; flex-direction:column; gap:12px; font-size:11px; color:#65715c; }
 .footer-line { display:flex; justify-content:space-between; align-items:center; }
+.author-link { align-self:center; color:inherit; padding:8px 12px; text-underline-offset:4px; }
+.author-link:hover { color:var(--ink); }
+.author-link:focus-visible { outline:2px solid currentColor; outline-offset:3px; border-radius:4px; }
 .footer-line>span:last-child { font-size:10px; letter-spacing:1.6px; }
 .footer-line>span:last-child span { font-size:17px; margin-left:10px; }
 .site-version { align-self:center; max-width:100%; font-size:11px; line-height:1.8; letter-spacing:.2px; overflow-wrap:anywhere; }
